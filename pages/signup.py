@@ -63,12 +63,7 @@ def main():
                 st.session_state.needs_verification = False
                 st.switch_page("login.py")
         else:
-            st.success(f"Welcome to SkillQ, {st.session_state.user_email}!")
-            if st.button("Logout"):
-                st.session_state.authenticated = False
-                st.session_state.user_email = None
-                st.session_state.needs_verification = False
-                st.rerun()
+            st.switch_page("pages/home.py")
         return
 
     # Signup form

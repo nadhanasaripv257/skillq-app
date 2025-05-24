@@ -49,13 +49,9 @@ def main():
     
     initialize_session_state()
     
-    # If user is already authenticated, show welcome message
+    # If user is already authenticated, redirect to home page
     if st.session_state.authenticated:
-        st.success(f"Welcome back, {st.session_state.user_email}!")
-        if st.button("Logout"):
-            st.session_state.authenticated = False
-            st.session_state.user_email = None
-            st.rerun()
+        st.switch_page("pages/home.py")
         return
 
     # Login form
@@ -71,7 +67,7 @@ def main():
                 st.error("Please fill in all fields")
             else:
                 if login_user(email, password):
-                    st.rerun()
+                    st.switch_page("pages/home.py")
     
     # Sign up link
     st.markdown("---")
