@@ -131,6 +131,10 @@ def main():
             st.switch_page("login.py")
         return
 
+    # Add back button at the top
+    if st.button("← Back to Home"):
+        st.switch_page("pages/home.py")
+
     st.title("📄 Resume Upload")
     st.write(f"Welcome, {st.session_state.user_email}!")
 
@@ -175,7 +179,7 @@ def main():
     if st.button("Logout"):
         st.session_state.authenticated = False
         st.session_state.user_email = None
-        st.rerun()
+        st.switch_page("login.py")
 
 if __name__ == "__main__":
     main() 
