@@ -31,6 +31,8 @@ def initialize_session_state():
         st.session_state.search_results = None
     if 'last_query' not in st.session_state:
         st.session_state.last_query = None
+    if 'current_filters' not in st.session_state:
+        st.session_state.current_filters = None
 
 def get_candidate_skills():
     """Get all candidate skills from resumes and organize them by category"""
@@ -118,27 +120,41 @@ def display_skills(skills_by_category):
                     col_idx = i % 3
                     cols[col_idx].write(f"• {skill}")
 
-def search_candidates(query):
-    """Search for candidates based on query"""
+def refine_search_candidates(query, current_filters):
+    """Refine search based on new query and existing filters"""
     try:
-        # Extract structured filters from the query
-        filters = openai_client.extract_query_filters(query)
+        # Extract new filters from the query
+        new_filters = openai_client.extract_query_filters(query)
+        
+        # Merge with existing filters
+        if current_filters:
+            # Update only the fields that are mentioned in the new query
+            if new_filters['location']:
+                current_filters['location'] = new_filters['location']
+            if new_filters['experience_years_min']:
+                current_filters['experience_years_min'] = new_filters['experience_years_min']
+            if new_filters['required_skills']:
+                current_filters['required_skills'] = new_filters['required_skills']
+            if new_filters['role']:
+                current_filters['role'] = new_filters['role']
+        else:
+            current_filters = new_filters
         
         # Build the query
         query = supabase.table('resumes').select('*')
         
         # Apply location filter if present
-        if filters['location']:
-            query = query.ilike('location', f'%{filters["location"]}%')
+        if current_filters['location']:
+            query = query.ilike('location', f'%{current_filters["location"]}%')
         
         # Apply experience filter if present
-        if filters['experience_years_min']:
-            query = query.gte('total_years_experience', filters['experience_years_min'])
+        if current_filters['experience_years_min']:
+            query = query.gte('total_years_experience', current_filters['experience_years_min'])
         
         # Apply skills filter if present
-        if filters['required_skills']:
+        if current_filters['required_skills']:
             # Convert skills to lowercase for case-insensitive comparison
-            required_skills = [skill.lower() for skill in filters['required_skills']]
+            required_skills = [skill.lower() for skill in current_filters['required_skills']]
             # Use the && operator to check for array overlap
             query = query.filter('skills', 'cs', required_skills)
         
@@ -146,7 +162,7 @@ def search_candidates(query):
         response = query.execute()
         
         if not response.data:
-            return []
+            return [], current_filters
         
         # Convert to DataFrame for easier manipulation
         df = pd.DataFrame(response.data)
@@ -157,19 +173,19 @@ def search_candidates(query):
             total_criteria = 0
             
             # Location match
-            if filters['location']:
+            if current_filters['location']:
                 total_criteria += 1
-                if row['location'] and filters['location'].lower() in row['location'].lower():
+                if row['location'] and current_filters['location'].lower() in row['location'].lower():
                     score += 1
             
             # Experience match
-            if filters['experience_years_min']:
+            if current_filters['experience_years_min']:
                 total_criteria += 1
-                if row['total_years_experience'] and row['total_years_experience'] >= filters['experience_years_min']:
+                if row['total_years_experience'] and row['total_years_experience'] >= current_filters['experience_years_min']:
                     score += 1
             
             # Skills match
-            if filters['required_skills']:
+            if current_filters['required_skills']:
                 total_criteria += 1
                 candidate_skills = [s.lower() for s in row['skills']]
                 matching_skills = [s for s in required_skills if s in candidate_skills]
@@ -187,10 +203,10 @@ def search_candidates(query):
         # Convert back to list of dictionaries
         candidates = df.to_dict('records')
         
-        return candidates
+        return candidates, current_filters
     except Exception as e:
         st.error(f"Error searching candidates: {str(e)}")
-        return []
+        return [], current_filters
 
 def format_candidate_response(candidates):
     """Format candidate search results into a table"""
@@ -226,6 +242,23 @@ def format_candidate_response(candidates):
     
     return f"Found {len(candidates)} matching candidates."
 
+def format_current_filters(filters):
+    """Format current filters for display"""
+    if not filters:
+        return "No active filters"
+    
+    filter_parts = []
+    if filters.get('role'):
+        filter_parts.append(f"👤 Role: {filters['role']}")
+    if filters.get('location'):
+        filter_parts.append(f"📍 Location: {filters['location']}")
+    if filters.get('experience_years_min'):
+        filter_parts.append(f"⏳ Min Experience: {filters['experience_years_min']} years")
+    if filters.get('required_skills'):
+        filter_parts.append(f"🛠️ Skills: {', '.join(filters['required_skills'])}")
+    
+    return " | ".join(filter_parts)
+
 def save_chat_message(question, answer):
     """Save chat message to Supabase"""
     try:
@@ -253,7 +286,7 @@ def save_chat_message(question, answer):
         print(f"Data attempted to save: {data}")
 
 def load_chat_history():
-    """Load chat history from Supabase"""
+    """Load chat history from Supabase and group by session"""
     try:
         if not st.session_state.user_email:
             return []
@@ -262,13 +295,70 @@ def load_chat_history():
             .select('*')\
             .eq('user_email', st.session_state.user_email)\
             .order('timestamp', desc=True)\
-            .limit(10)\
+            .limit(5)\
             .execute()
             
-        return response.data if response.data else []
+        if not response.data:
+            return []
+            
+        # Group conversations by session (30-minute intervals)
+        sessions = {}
+        for chat in response.data:
+            timestamp = datetime.fromisoformat(chat['timestamp'].replace('Z', '+00:00'))
+            # Create session key based on 30-minute intervals
+            session_key = timestamp.strftime('%Y-%m-%d %H:%M')
+            if session_key not in sessions:
+                sessions[session_key] = []
+            sessions[session_key].append(chat)
+            
+        return sessions
     except Exception as e:
         st.error(f"Error loading chat history: {str(e)}")
-        return []
+        return {}
+
+def display_chat_history(sessions):
+    """Display chat history grouped by session"""
+    if not sessions:
+        st.info("No recent conversations found.")
+        return
+        
+    st.markdown("#### Last 5 Conversations")
+    for session_time, chats in sessions.items():
+        # Convert session time to a more readable format
+        session_dt = datetime.strptime(session_time, '%Y-%m-%d %H:%M')
+        time_ago = datetime.now(UTC) - session_dt.replace(tzinfo=UTC)
+        
+        # Format the time ago string
+        if time_ago.days > 0:
+            time_str = f"{time_ago.days} days ago"
+        elif time_ago.seconds >= 3600:
+            hours = time_ago.seconds // 3600
+            time_str = f"{hours} hour{'s' if hours > 1 else ''} ago"
+        elif time_ago.seconds >= 60:
+            minutes = time_ago.seconds // 60
+            time_str = f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        else:
+            time_str = "just now"
+            
+        with st.expander(f"🗨️ Session from {time_str}", expanded=True):
+            # Display each chat in the session
+            for chat in chats:
+                st.markdown("---")
+                st.markdown("**Question:**")
+                st.write(chat['question'])
+                st.markdown("**Answer:**")
+                st.write(chat['answer'])
+                
+                # Add a button to reuse the query
+                if st.button("Reuse this search", key=f"reuse_{chat['id']}"):
+                    st.session_state.last_query = chat['question']
+                    # Execute the search immediately
+                    with st.spinner("Searching for candidates..."):
+                        candidates, updated_filters = refine_search_candidates(chat['question'], None)
+                        st.session_state.search_results = candidates
+                        st.session_state.current_filters = updated_filters
+                        answer = format_candidate_response(candidates)
+                        st.rerun()
 
 def main():
     st.set_page_config(
@@ -308,10 +398,11 @@ def main():
         if st.button("Ask"):
             if question:
                 with st.spinner("Searching for candidates..."):
-                    # Search for candidates
-                    candidates = search_candidates(question)
+                    # Search for candidates with context
+                    candidates, updated_filters = refine_search_candidates(question, st.session_state.current_filters)
                     st.session_state.search_results = candidates
                     st.session_state.last_query = question
+                    st.session_state.current_filters = updated_filters
                     answer = format_candidate_response(candidates)
                     
                     # Save to chat history
@@ -323,8 +414,16 @@ def main():
                         'answer': answer,
                         'timestamp': datetime.now(UTC).isoformat()
                     })
+                    st.rerun()  # Rerun to update the filters display
             else:
                 st.warning("Please enter a question")
+
+        # Display current filters if any
+        if st.session_state.current_filters:
+            st.markdown("---")
+            st.markdown("### 🔍 Active Search Filters")
+            st.markdown(f"**{format_current_filters(st.session_state.current_filters)}**")
+            st.markdown("---")
 
         # Display search results if available
         if st.session_state.search_results is not None:
@@ -339,25 +438,9 @@ def main():
         display_skills(skills_by_category)
 
         st.subheader("Recent Conversations")
-        # Load chat history from database
-        chat_history = load_chat_history()
-        
-        for chat in chat_history:
-            with st.expander(f"Q: {chat['question'][:50]}...", expanded=False):
-                st.write("**Question:**")
-                st.write(chat['question'])
-                st.write("**Answer:**")
-                st.write(chat['answer'])
-                
-                # Add a button to reuse the query
-                if st.button("Reuse this search", key=f"reuse_{chat['id']}"):
-                    st.session_state.last_query = chat['question']
-                    # Execute the search immediately
-                    with st.spinner("Searching for candidates..."):
-                        candidates = search_candidates(chat['question'])
-                        st.session_state.search_results = candidates
-                        answer = format_candidate_response(candidates)
-                        st.rerun()
+        # Load and display chat history grouped by session
+        sessions = load_chat_history()
+        display_chat_history(sessions)
 
     # Add a logout button at the bottom
     st.markdown("---")
@@ -367,6 +450,7 @@ def main():
         st.session_state.chat_history = []
         st.session_state.search_results = None
         st.session_state.last_query = None
+        st.session_state.current_filters = None
         st.switch_page("login.py")
 
 if __name__ == "__main__":
