@@ -3,7 +3,9 @@ from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
 import json
-from datetime import datetime
+from datetime import datetime, UTC
+from backend.openai_client import OpenAIClient
+import pandas as pd
 
 # Load environment variables
 load_dotenv()
@@ -14,6 +16,9 @@ supabase: Client = create_client(
     supabase_key=st.secrets["SUPABASE_KEY"]
 )
 
+# Initialize OpenAI client
+openai_client = OpenAIClient()
+
 def initialize_session_state():
     """Initialize session state variables"""
     if 'authenticated' not in st.session_state:
@@ -22,68 +27,248 @@ def initialize_session_state():
         st.session_state.user_email = None
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'search_results' not in st.session_state:
+        st.session_state.search_results = None
+    if 'last_query' not in st.session_state:
+        st.session_state.last_query = None
 
 def get_candidate_skills():
-    """Get all candidate skills from resumes"""
+    """Get all candidate skills from resumes and organize them by category"""
     try:
-        response = supabase.table('resumes').select('skills').execute()
+        response = supabase.table('resumes').select('skills, skill_categories').execute()
         all_skills = set()
+        skill_categories = {}
+        
+        # Default categories
+        default_categories = {
+            'Technical & Tools': [],  # Combined category
+            'Soft Skills': [],
+            'Management & Leadership': [],
+            'Other': []
+        }
+        
         for resume in response.data:
-            skills_data = json.loads(resume['skills'])
-            all_skills.update(skills_data['skills'])
-        return sorted(list(all_skills))
+            skills_data = resume['skills']
+            categories_data = resume.get('skill_categories', {})
+            
+            # Process skills
+            if isinstance(skills_data, str):
+                try:
+                    skills_data = json.loads(skills_data)
+                    if isinstance(skills_data, dict) and 'skills' in skills_data:
+                        all_skills.update(skills_data['skills'])
+                    else:
+                        all_skills.update(skills_data)
+                except json.JSONDecodeError:
+                    all_skills.add(skills_data)
+            elif isinstance(skills_data, list):
+                all_skills.update(skills_data)
+            elif isinstance(skills_data, dict) and 'skills' in skills_data:
+                all_skills.update(skills_data['skills'])
+        
+        # Categorize skills
+        for skill in sorted(all_skills):
+            # Check if skill is in any category from the database
+            categorized = False
+            for category, skills in categories_data.items():
+                if skill in skills:
+                    if category not in skill_categories:
+                        skill_categories[category] = []
+                    skill_categories[category].append(skill)
+                    categorized = True
+                    break
+            
+            # If not categorized, use default categories
+            if not categorized:
+                # Technical & Tools (combined category)
+                if any(tech in skill.lower() for tech in ['programming', 'coding', 'development', 'software', 'technical', 'engineering', 'database', 'cloud', 'api', 'web', 'mobile', 'devops', 'security', 'testing', 'tool', 'platform', 'system', 'application', 'crm', 'erp', 'jira', 'git', 'docker', 'kubernetes']):
+                    default_categories['Technical & Tools'].append(skill)
+                # Management & Leadership
+                elif any(lead in skill.lower() for lead in ['management', 'leadership', 'team', 'project', 'strategy', 'planning', 'budget', 'resource']):
+                    default_categories['Management & Leadership'].append(skill)
+                # Soft Skills
+                elif any(soft in skill.lower() for soft in ['problem solving', 'critical thinking', 'adaptability', 'creativity', 'collaboration', 'time management', 'organization', 'communication', 'presentation', 'writing', 'speaking', 'negotiation', 'interpersonal']):
+                    default_categories['Soft Skills'].append(skill)
+                else:
+                    default_categories['Other'].append(skill)
+        
+        # Merge custom categories with default categories
+        for category, skills in skill_categories.items():
+            if category not in default_categories:
+                default_categories[category] = []
+            default_categories[category].extend(skills)
+        
+        return default_categories
     except Exception as e:
         st.error(f"Error loading skills: {str(e)}")
-        return []
+        return {}
+
+def display_skills(skills_by_category):
+    """Display skills organized by category"""
+    if not skills_by_category:
+        st.info("No skills found. Please upload some resumes first.")
+        return
+        
+    for category, skills in skills_by_category.items():
+        if skills:  # Only show categories that have skills
+            with st.expander(f"📚 {category} ({len(skills)})", expanded=True):
+                # Create columns for better layout
+                cols = st.columns(3)
+                for i, skill in enumerate(sorted(skills)):
+                    col_idx = i % 3
+                    cols[col_idx].write(f"• {skill}")
 
 def search_candidates(query):
     """Search for candidates based on query"""
     try:
-        # Get all resumes
-        response = supabase.table('resumes').select('*').execute()
+        # Extract structured filters from the query
+        filters = openai_client.extract_query_filters(query)
         
-        # Simple keyword matching for now
-        # TODO: Implement more sophisticated search using NLP
-        matching_candidates = []
-        for resume in response.data:
-            skills_data = json.loads(resume['skills'])
-            if any(skill.lower() in query.lower() for skill in skills_data['skills']):
-                matching_candidates.append({
-                    'file_name': resume['file_name'],
-                    'skills': skills_data['skills'],
-                    'confidence': skills_data['confidence']
-                })
+        # Build the query
+        query = supabase.table('resumes').select('*')
         
-        return matching_candidates
+        # Apply location filter if present
+        if filters['location']:
+            query = query.ilike('location', f'%{filters["location"]}%')
+        
+        # Apply experience filter if present
+        if filters['experience_years_min']:
+            query = query.gte('total_years_experience', filters['experience_years_min'])
+        
+        # Apply skills filter if present
+        if filters['required_skills']:
+            # Convert skills to lowercase for case-insensitive comparison
+            required_skills = [skill.lower() for skill in filters['required_skills']]
+            # Use the && operator to check for array overlap
+            query = query.filter('skills', 'cs', required_skills)
+        
+        # Execute the query
+        response = query.execute()
+        
+        if not response.data:
+            return []
+        
+        # Convert to DataFrame for easier manipulation
+        df = pd.DataFrame(response.data)
+        
+        # Calculate match score for each candidate
+        def calculate_match_score(row):
+            score = 0
+            total_criteria = 0
+            
+            # Location match
+            if filters['location']:
+                total_criteria += 1
+                if row['location'] and filters['location'].lower() in row['location'].lower():
+                    score += 1
+            
+            # Experience match
+            if filters['experience_years_min']:
+                total_criteria += 1
+                if row['total_years_experience'] and row['total_years_experience'] >= filters['experience_years_min']:
+                    score += 1
+            
+            # Skills match
+            if filters['required_skills']:
+                total_criteria += 1
+                candidate_skills = [s.lower() for s in row['skills']]
+                matching_skills = [s for s in required_skills if s in candidate_skills]
+                if matching_skills:
+                    score += 1
+            
+            return score / total_criteria if total_criteria > 0 else 0
+        
+        # Calculate match scores
+        df['match_score'] = df.apply(calculate_match_score, axis=1)
+        
+        # Sort by match score and get top 10
+        df = df.sort_values('match_score', ascending=False).head(10)
+        
+        # Convert back to list of dictionaries
+        candidates = df.to_dict('records')
+        
+        return candidates
     except Exception as e:
         st.error(f"Error searching candidates: {str(e)}")
         return []
 
 def format_candidate_response(candidates):
-    """Format candidate search results into a readable response"""
+    """Format candidate search results into a table"""
     if not candidates:
         return "I couldn't find any candidates matching your criteria."
     
-    response = "Here are the matching candidates:\n\n"
-    for i, candidate in enumerate(candidates, 1):
-        response += f"{i}. {candidate['file_name']}\n"
-        response += f"   Skills: {', '.join(candidate['skills'])}\n"
-        response += f"   Match Confidence: {candidate['confidence']*100:.1f}%\n\n"
+    # Create a DataFrame for display
+    df = pd.DataFrame(candidates)
     
-    return response
+    # Select and rename columns for display
+    display_df = df[['full_name', 'skills', 'total_years_experience', 'location', 'current_or_last_job_title', 'match_score']]
+    display_df.columns = ['Name', 'Skills', 'Experience (years)', 'Location', 'Current Job Title', 'Match Score']
+    
+    # Format the match score as percentage
+    display_df['Match Score'] = display_df['Match Score'].apply(lambda x: f"{x*100:.1f}%")
+    
+    # Format skills as comma-separated string
+    display_df['Skills'] = display_df['Skills'].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
+    
+    # Display the table
+    st.dataframe(
+        display_df,
+        column_config={
+            "Name": st.column_config.TextColumn("Name", width="medium"),
+            "Skills": st.column_config.TextColumn("Skills", width="large"),
+            "Experience (years)": st.column_config.NumberColumn("Experience (years)", width="small"),
+            "Location": st.column_config.TextColumn("Location", width="medium"),
+            "Current Job Title": st.column_config.TextColumn("Current Job Title", width="large"),
+            "Match Score": st.column_config.TextColumn("Match Score", width="small")
+        },
+        hide_index=True
+    )
+    
+    return f"Found {len(candidates)} matching candidates."
 
 def save_chat_message(question, answer):
     """Save chat message to Supabase"""
     try:
+        if not st.session_state.user_email:
+            st.warning("User email not found. Chat history will not be saved.")
+            return
+            
         data = {
             'user_email': st.session_state.user_email,
             'question': question,
             'answer': answer,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(UTC).isoformat()
         }
-        supabase.table('chat_history').insert(data).execute()
+        
+        response = supabase.table('chat_history').insert(data).execute()
+        
+        if hasattr(response, 'error') and response.error:
+            st.error(f"Error saving chat message: {response.error}")
+            return
+            
     except Exception as e:
         st.error(f"Error saving chat message: {str(e)}")
+        # Log the full error details for debugging
+        print(f"Detailed error in save_chat_message: {str(e)}")
+        print(f"Data attempted to save: {data}")
+
+def load_chat_history():
+    """Load chat history from Supabase"""
+    try:
+        if not st.session_state.user_email:
+            return []
+            
+        response = supabase.table('chat_history')\
+            .select('*')\
+            .eq('user_email', st.session_state.user_email)\
+            .order('timestamp', desc=True)\
+            .limit(10)\
+            .execute()
+            
+        return response.data if response.data else []
+    except Exception as e:
+        st.error(f"Error loading chat history: {str(e)}")
+        return []
 
 def main():
     st.set_page_config(
@@ -116,7 +301,8 @@ def main():
         question = st.text_area(
             "Your question",
             placeholder="Example: Find me candidates with Python and React experience",
-            height=100
+            height=100,
+            value=st.session_state.last_query if st.session_state.last_query else ""
         )
 
         if st.button("Ask"):
@@ -124,6 +310,8 @@ def main():
                 with st.spinner("Searching for candidates..."):
                     # Search for candidates
                     candidates = search_candidates(question)
+                    st.session_state.search_results = candidates
+                    st.session_state.last_query = question
                     answer = format_candidate_response(candidates)
                     
                     # Save to chat history
@@ -133,29 +321,43 @@ def main():
                     st.session_state.chat_history.insert(0, {
                         'question': question,
                         'answer': answer,
-                        'timestamp': datetime.utcnow().isoformat()
+                        'timestamp': datetime.now(UTC).isoformat()
                     })
-                    
-                    st.rerun()
             else:
                 st.warning("Please enter a question")
 
+        # Display search results if available
+        if st.session_state.search_results is not None:
+            st.subheader("Search Results")
+            if st.session_state.last_query:
+                st.write(f"Results for: {st.session_state.last_query}")
+            format_candidate_response(st.session_state.search_results)
+
     with col2:
         st.subheader("Available Skills")
-        skills = get_candidate_skills()
-        if skills:
-            st.write("Here are some skills you can ask about:")
-            st.write(", ".join(skills))
-        else:
-            st.info("No skills found. Please upload some resumes first.")
+        skills_by_category = get_candidate_skills()
+        display_skills(skills_by_category)
 
         st.subheader("Recent Conversations")
-        for chat in st.session_state.chat_history:
-            with st.expander(f"Q: {chat['question'][:50]}..."):
+        # Load chat history from database
+        chat_history = load_chat_history()
+        
+        for chat in chat_history:
+            with st.expander(f"Q: {chat['question'][:50]}...", expanded=False):
                 st.write("**Question:**")
                 st.write(chat['question'])
                 st.write("**Answer:**")
                 st.write(chat['answer'])
+                
+                # Add a button to reuse the query
+                if st.button("Reuse this search", key=f"reuse_{chat['id']}"):
+                    st.session_state.last_query = chat['question']
+                    # Execute the search immediately
+                    with st.spinner("Searching for candidates..."):
+                        candidates = search_candidates(chat['question'])
+                        st.session_state.search_results = candidates
+                        answer = format_candidate_response(candidates)
+                        st.rerun()
 
     # Add a logout button at the bottom
     st.markdown("---")
@@ -163,6 +365,8 @@ def main():
         st.session_state.authenticated = False
         st.session_state.user_email = None
         st.session_state.chat_history = []
+        st.session_state.search_results = None
+        st.session_state.last_query = None
         st.switch_page("login.py")
 
 if __name__ == "__main__":
