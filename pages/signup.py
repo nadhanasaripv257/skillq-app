@@ -18,6 +18,8 @@ def initialize_session_state():
         st.session_state.authenticated = False
     if 'user_email' not in st.session_state:
         st.session_state.user_email = None
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
     if 'needs_verification' not in st.session_state:
         st.session_state.needs_verification = False
 
@@ -34,6 +36,7 @@ def signup_user(email: str, password: str) -> bool:
         if hasattr(response, 'user') and response.user:
             st.session_state.authenticated = True
             st.session_state.user_email = email
+            st.session_state.user_id = response.user.id
             st.session_state.needs_verification = True
             return True
         else:

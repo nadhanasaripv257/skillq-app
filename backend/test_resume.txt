@@ -1,0 +1,39 @@
+John Doe
+Software Engineer
+john.doe@example.com | +1 (555) 123-4567 | San Francisco, CA
+
+PROFESSIONAL SUMMARY
+Experienced software engineer with 5+ years of expertise in full-stack development, specializing in Python, React, and cloud technologies.
+
+SKILLS
+- Python
+- JavaScript/React
+- AWS
+- Docker
+- PostgreSQL
+- Git
+
+WORK EXPERIENCE
+
+Senior Software Engineer
+TechCorp Inc.
+January 2020 - Present
+- Led development of microservices architecture
+- Implemented CI/CD pipelines
+- Mentored junior developers
+
+Software Engineer
+StartUpX
+June 2018 - December 2019
+- Developed RESTful APIs
+- Built frontend components
+- Optimized database queries
+
+EDUCATION
+Bachelor of Science in Computer Science
+University of Technology
+2014 - 2018
+
+CERTIFICATIONS
+- AWS Certified Solutions Architect
+- Google Cloud Professional Developer 

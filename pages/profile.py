@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -18,43 +19,55 @@ def initialize_session_state():
         st.session_state.authenticated = False
     if 'user_email' not in st.session_state:
         st.session_state.user_email = None
-    if 'user_profile' not in st.session_state:
-        st.session_state.user_profile = {}
 
-def load_user_profile():
-    """Load user profile from Supabase"""
+def get_user_profile(user_email):
+    """Get user profile from Supabase"""
     try:
-        response = supabase.table('profiles').select('*').eq('email', st.session_state.user_email).execute()
-        if response.data:
-            st.session_state.user_profile = response.data[0]
-        else:
-            # Create default profile if none exists
-            st.session_state.user_profile = {
-                'email': st.session_state.user_email,
-                'full_name': '',
-                'company': '',
-                'role': '',
-                'phone': '',
-                'linkedin': ''
-            }
+        # First get the user's ID from auth.users
+        user_response = supabase.auth.get_user()
+        if not user_response.user:
+            return None
+        
+        user_id = user_response.user.id
+        
+        # Then get the profile data
+        profile_response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
+        
+        if profile_response.data:
+            return profile_response.data[0]
+        return None
     except Exception as e:
-        st.error(f"Error loading profile: {str(e)}")
+        st.error(f"Error fetching profile: {str(e)}")
+        return None
 
-def save_user_profile(profile_data):
+def save_user_profile(user_email, profile_data):
     """Save user profile to Supabase"""
     try:
-        # Check if profile exists
-        response = supabase.table('profiles').select('*').eq('email', st.session_state.user_email).execute()
+        # Get the user's ID from auth.users
+        user_response = supabase.auth.get_user()
+        if not user_response.user:
+            return False
         
-        if response.data:
+        user_id = user_response.user.id
+        
+        # Check if profile exists
+        existing_profile = get_user_profile(user_email)
+        
+        if existing_profile:
             # Update existing profile
-            supabase.table('profiles').update(profile_data).eq('email', st.session_state.user_email).execute()
+            response = supabase.table('user_profiles').update({
+                'full_name': profile_data['full_name'],
+                'company': profile_data['company'],
+                'role': profile_data['role'],
+                'phone': profile_data['phone'],
+                'linkedin': profile_data['linkedin'],
+                'updated_at': datetime.utcnow().isoformat()
+            }).eq('user_id', user_id).execute()
         else:
             # Create new profile
-            profile_data['email'] = st.session_state.user_email
-            supabase.table('profiles').insert(profile_data).execute()
+            profile_data['user_id'] = user_id
+            response = supabase.table('user_profiles').insert(profile_data).execute()
         
-        st.success("Profile updated successfully!")
         return True
     except Exception as e:
         st.error(f"Error saving profile: {str(e)}")
@@ -64,7 +77,7 @@ def main():
     st.set_page_config(
         page_title="SkillQ - Profile Settings",
         page_icon="👤",
-        layout="centered"
+        layout="wide"
     )
     
     initialize_session_state()
@@ -76,45 +89,32 @@ def main():
             st.switch_page("login.py")
         return
 
-    # Load user profile
-    load_user_profile()
+    # Add back button at the top
+    if st.button("← Back to Home"):
+        st.switch_page("pages/home.py")
 
     st.title("👤 Profile Settings")
+    st.write(f"Welcome, {st.session_state.user_email}!")
+
+    # Get existing profile data
+    profile_data = get_user_profile(st.session_state.user_email)
     
+    # Create form for profile data
     with st.form("profile_form"):
-        full_name = st.text_input(
-            "Full Name",
-            value=st.session_state.user_profile.get('full_name', ''),
-            placeholder="Enter your full name"
-        )
+        st.subheader("Update Your Profile")
         
-        company = st.text_input(
-            "Company",
-            value=st.session_state.user_profile.get('company', ''),
-            placeholder="Enter your company name"
-        )
+        # Initialize form fields with existing data or empty strings
+        full_name = st.text_input("Full Name", value=profile_data.get('full_name', '') if profile_data else '')
+        company = st.text_input("Company", value=profile_data.get('company', '') if profile_data else '')
+        role = st.text_input("Role", value=profile_data.get('role', '') if profile_data else '')
+        phone = st.text_input("Phone", value=profile_data.get('phone', '') if profile_data else '')
+        linkedin = st.text_input("LinkedIn Profile", value=profile_data.get('linkedin', '') if profile_data else '')
         
-        role = st.text_input(
-            "Role",
-            value=st.session_state.user_profile.get('role', ''),
-            placeholder="Enter your role"
-        )
+        # Submit button
+        submitted = st.form_submit_button("Save Profile")
         
-        phone = st.text_input(
-            "Phone",
-            value=st.session_state.user_profile.get('phone', ''),
-            placeholder="Enter your phone number"
-        )
-        
-        linkedin = st.text_input(
-            "LinkedIn Profile",
-            value=st.session_state.user_profile.get('linkedin', ''),
-            placeholder="Enter your LinkedIn profile URL"
-        )
-        
-        submit = st.form_submit_button("Update Profile")
-        
-        if submit:
+        if submitted:
+            # Prepare profile data
             profile_data = {
                 'full_name': full_name,
                 'company': company,
@@ -122,23 +122,19 @@ def main():
                 'phone': phone,
                 'linkedin': linkedin
             }
-            if save_user_profile(profile_data):
-                st.session_state.user_profile.update(profile_data)
+            
+            # Save profile data
+            if save_user_profile(st.session_state.user_email, profile_data):
+                st.success("Profile updated successfully!")
+            else:
+                st.error("Failed to update profile. Please try again.")
 
-    # Add navigation buttons at the bottom
+    # Add a logout button at the bottom
     st.markdown("---")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🏠 Back to Home"):
-            st.switch_page("pages/home.py")
-    
-    with col2:
-        if st.button("Logout"):
-            st.session_state.authenticated = False
-            st.session_state.user_email = None
-            st.session_state.user_profile = {}
-            st.switch_page("login.py")
+    if st.button("Logout"):
+        st.session_state.authenticated = False
+        st.session_state.user_email = None
+        st.switch_page("login.py")
 
 if __name__ == "__main__":
     main() 

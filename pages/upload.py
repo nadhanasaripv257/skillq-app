@@ -5,19 +5,27 @@ from dotenv import load_dotenv
 import tempfile
 import shutil
 from pathlib import Path
-import PyPDF2
-import docx
 import json
 from datetime import datetime
+import sys
+import concurrent.futures
+from functools import lru_cache
+
+# Add backend directory to Python path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from backend.resume_processor import ResumeProcessor
+from backend.supabase_client import SupabaseClient
 
 # Load environment variables
 load_dotenv()
 
 # Initialize Supabase client
-supabase: Client = create_client(
-    supabase_url=st.secrets["SUPABASE_URL"],
-    supabase_key=st.secrets["SUPABASE_KEY"]
-)
+supabase_client = SupabaseClient()
+
+# Initialize ResumeProcessor with caching
+@st.cache_resource
+def get_resume_processor():
+    return ResumeProcessor()
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -25,95 +33,56 @@ def initialize_session_state():
         st.session_state.authenticated = False
     if 'user_email' not in st.session_state:
         st.session_state.user_email = None
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
 
-def extract_text_from_pdf(file_path):
-    """Extract text from PDF file"""
+def process_single_upload(uploaded_file, user_id):
+    """Process a single file upload"""
     try:
-        with open(file_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-            return text
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_file_path = tmp_file.name
+
+        try:
+            # Process the resume
+            processor = get_resume_processor()
+            result = processor.process_resume(tmp_file_path)
+            return result
+            
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(tmp_file_path):
+                os.unlink(tmp_file_path)
+                
     except Exception as e:
-        st.error(f"Error reading PDF: {str(e)}")
+        st.error(f"Error processing file: {str(e)}")
         return None
 
-def extract_text_from_docx(file_path):
-    """Extract text from DOCX file"""
-    try:
-        doc = docx.Document(file_path)
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
-    except Exception as e:
-        st.error(f"Error reading DOCX: {str(e)}")
-        return None
-
-def extract_skills(text):
-    """Extract skills from text (placeholder function - to be enhanced with NLP)"""
-    # This is a placeholder. In a real application, you would use NLP or ML to extract skills
-    # For now, we'll just return some dummy data
-    return {
-        "skills": ["Python", "JavaScript", "React", "Node.js", "SQL"],
-        "confidence": 0.85
-    }
-
-def save_to_supabase(file_name, file_type, text_content, skills_data, user_email):
-    """Save resume data to Supabase"""
-    try:
-        data = {
-            "file_name": file_name,
-            "file_type": file_type,
-            "content": text_content,
-            "skills": json.dumps(skills_data),
-            "uploaded_by": user_email,
-            "uploaded_at": datetime.utcnow().isoformat()
+def process_bulk_upload(uploaded_files):
+    """Process multiple files in parallel"""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        # Submit all files for processing
+        future_to_file = {
+            executor.submit(process_single_upload, file): file 
+            for file in uploaded_files
         }
         
-        response = supabase.table('resumes').insert(data).execute()
-        return True
-    except Exception as e:
-        st.error(f"Error saving to database: {str(e)}")
-        return False
-
-def process_single_upload(uploaded_file, user_email):
-    """Process a single file upload"""
-    # Create a temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-        shutil.copyfileobj(uploaded_file, tmp_file)
-        tmp_file_path = tmp_file.name
-
-    try:
-        # Extract text based on file type
-        if uploaded_file.name.lower().endswith('.pdf'):
-            text_content = extract_text_from_pdf(tmp_file_path)
-        elif uploaded_file.name.lower().endswith('.docx'):
-            text_content = extract_text_from_docx(tmp_file_path)
-        else:
-            st.error("Unsupported file format")
-            return False
-
-        if text_content:
-            # Extract skills from text
-            skills_data = extract_skills(text_content)
-            
-            # Save to Supabase
-            if save_to_supabase(
-                uploaded_file.name,
-                os.path.splitext(uploaded_file.name)[1][1:],
-                text_content,
-                skills_data,
-                user_email
-            ):
-                st.success(f"Successfully processed {uploaded_file.name}")
-                return True
-    finally:
-        # Clean up temporary file
-        os.unlink(tmp_file_path)
-    
-    return False
+        # Process results as they complete
+        results = []
+        for future in concurrent.futures.as_completed(future_to_file):
+            file = future_to_file[future]
+            try:
+                result = future.result()
+                if result:
+                    results.append((file.name, True))
+                else:
+                    results.append((file.name, False))
+            except Exception as e:
+                results.append((file.name, False))
+                st.error(f"Error processing {file.name}: {str(e)}")
+        
+        return results
 
 def main():
     st.set_page_config(
@@ -128,12 +97,12 @@ def main():
     if not st.session_state.authenticated:
         st.warning("Please login to access this page")
         if st.button("Go to Login"):
-            st.switch_page("login.py")
+            st.switch_page("pages/login.py")
         return
 
     # Add back button at the top
     if st.button("← Back to Home"):
-        st.switch_page("pages/home.py")
+        st.switch_page("app.py")
 
     st.title("📄 Resume Upload")
     st.write(f"Welcome, {st.session_state.user_email}!")
@@ -151,9 +120,12 @@ def main():
         
         if uploaded_file:
             if st.button("Process Single Upload"):
-                with st.spinner("Processing..."):
-                    if process_single_upload(uploaded_file, st.session_state.user_email):
-                        st.success("Upload completed successfully!")
+                with st.spinner("Processing resume..."):
+                    result = process_single_upload(uploaded_file, st.session_state.user_id)
+                    if result:
+                        st.success(f"Successfully processed {uploaded_file.name}!")
+                        if st.button("Upload Another Resume"):
+                            st.rerun()
 
     with col2:
         st.subheader("Bulk Upload")
@@ -166,20 +138,27 @@ def main():
         
         if uploaded_files:
             if st.button("Process Bulk Upload"):
-                with st.spinner("Processing..."):
-                    success_count = 0
-                    for uploaded_file in uploaded_files:
-                        if process_single_upload(uploaded_file, st.session_state.user_email):
-                            success_count += 1
+                with st.spinner("Processing multiple files..."):
+                    results = process_bulk_upload(uploaded_files)
+                    success_count = sum(1 for _, success in results if success)
                     
+                    # Show detailed results
                     st.success(f"Successfully processed {success_count} out of {len(uploaded_files)} files")
+                    
+                    # Show failed files if any
+                    failed_files = [name for name, success in results if not success]
+                    if failed_files:
+                        st.warning(f"Failed to process: {', '.join(failed_files)}")
+                    
+                    if st.button("Upload More Resumes"):
+                        st.rerun()
 
     # Add a logout button at the bottom
     st.markdown("---")
     if st.button("Logout"):
         st.session_state.authenticated = False
         st.session_state.user_email = None
-        st.switch_page("login.py")
+        st.switch_page("pages/login.py")
 
 if __name__ == "__main__":
     main() 
