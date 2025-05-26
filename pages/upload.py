@@ -146,7 +146,8 @@ def main():
         uploaded_file = st.file_uploader(
             "Upload a resume",
             type=['pdf', 'docx'],
-            help="Upload a single PDF or DOCX file"
+            help="Upload a single PDF or DOCX file",
+            key="single_upload"
         )
         
         if uploaded_file:
@@ -159,8 +160,7 @@ def main():
                 if result:
                     st.success(f"Successfully processed {uploaded_file.name}!")
                     if st.button("Upload Another Resume"):
-                        # Clear the file uploader and refresh the page
-                        st.session_state.clear()
+                        st.session_state.single_upload = None
                         st.rerun()
 
     with col2:
@@ -169,7 +169,8 @@ def main():
             "Upload multiple resumes",
             type=['pdf', 'docx'],
             accept_multiple_files=True,
-            help="Upload multiple PDF or DOCX files"
+            help="Upload multiple PDF or DOCX files",
+            key="bulk_upload"
         )
         
         if uploaded_files:
@@ -185,10 +186,8 @@ def main():
                 if failed_files:
                     st.warning(f"Failed to process: {', '.join(failed_files)}")
                 
-                # Add a button to clear the file uploader
                 if st.button("Upload More Resumes"):
-                    # Clear the file uploader and refresh the page
-                    st.session_state.clear()
+                    st.session_state.bulk_upload = None
                     st.rerun()
 
     # Add a logout button at the bottom
