@@ -12,6 +12,18 @@ import concurrent.futures
 from functools import lru_cache
 import hashlib
 import time
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('resume_upload.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Add backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -48,6 +60,8 @@ def process_single_upload(file_content, file_name, user_id):
     max_retries = 3
     retry_count = 0
     
+    logger.info(f"Starting to process file: {file_name}")
+    
     while retry_count < max_retries:
         try:
             processor = get_resume_processor()
@@ -56,17 +70,24 @@ def process_single_upload(file_content, file_name, user_id):
             progress_bar = st.progress(0)
             
             # Update progress for each step
+            logger.debug(f"Processing file {file_name} - Reading file...")
             progress_bar.progress(0.2, "Reading file...")
+            
+            logger.debug(f"Processing file {file_name} - Processing content...")
             progress_bar.progress(0.4, "Processing content...")
             result = processor.process_resume_content(file_content, file_name)
+            
+            logger.debug(f"Processing file {file_name} - Storing data...")
             progress_bar.progress(0.8, "Storing data...")
             progress_bar.progress(1.0, "Complete!")
             
+            logger.info(f"Successfully processed file: {file_name}")
             # Keep progress bar visible
             time.sleep(1)
             return result
         except Exception as e:
             retry_count += 1
+            logger.error(f"Error processing file {file_name} (attempt {retry_count}/{max_retries}): {str(e)}", exc_info=True)
             if retry_count == max_retries:
                 st.error(f"Error processing file {file_name} after {max_retries} attempts: {str(e)}")
                 return None
@@ -79,11 +100,14 @@ def process_bulk_upload(uploaded_files):
     results = []
     total_files = len(uploaded_files)
     
+    logger.info(f"Starting bulk upload of {total_files} files")
+    
     # Create a progress bar for overall progress
     progress_bar = st.progress(0)
     
     for i in range(0, total_files, batch_size):
         batch = uploaded_files[i:i + batch_size]
+        logger.debug(f"Processing batch {i//batch_size + 1} of {(total_files + batch_size - 1)//batch_size}")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
             future_to_file = {
@@ -101,8 +125,10 @@ def process_bulk_upload(uploaded_files):
                 try:
                     result = future.result()
                     results.append((file.name, bool(result)))
+                    logger.info(f"Successfully processed {file.name}")
                 except Exception as e:
                     results.append((file.name, False))
+                    logger.error(f"Error processing {file.name}: {str(e)}", exc_info=True)
                     st.error(f"Error processing {file.name}: {str(e)}")
         
         # Update overall progress
@@ -113,6 +139,7 @@ def process_bulk_upload(uploaded_files):
     progress_bar.progress(1.0, "Complete!")
     time.sleep(1)
     
+    logger.info(f"Bulk upload completed. Successfully processed {sum(1 for _, success in results if success)} out of {total_files} files")
     return results
 
 def main():
