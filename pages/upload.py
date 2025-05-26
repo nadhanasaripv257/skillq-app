@@ -10,6 +10,8 @@ from datetime import datetime
 import sys
 import concurrent.futures
 from functools import lru_cache
+import hashlib
+import time
 
 # Add backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -36,53 +38,82 @@ def initialize_session_state():
     if 'user_id' not in st.session_state:
         st.session_state.user_id = None
 
-def process_single_upload(uploaded_file, user_id):
-    """Process a single file upload"""
-    try:
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            tmp_file_path = tmp_file.name
+def get_file_hash(file_content):
+    """Generate a hash of the file content for caching"""
+    return hashlib.md5(file_content).hexdigest()
 
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour, hide spinner
+def process_single_upload(file_content, file_name, user_id):
+    """Process a single file upload with caching and error recovery"""
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
         try:
-            # Process the resume
             processor = get_resume_processor()
-            result = processor.process_resume(tmp_file_path)
-            return result
             
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(tmp_file_path):
-                os.unlink(tmp_file_path)
-                
-    except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
-        return None
+            # Create a progress bar
+            progress_bar = st.progress(0)
+            
+            # Update progress for each step
+            progress_bar.progress(0.2, "Reading file...")
+            progress_bar.progress(0.4, "Processing content...")
+            result = processor.process_resume_content(file_content, file_name)
+            progress_bar.progress(0.8, "Storing data...")
+            progress_bar.progress(1.0, "Complete!")
+            
+            # Keep progress bar visible
+            time.sleep(1)
+            return result
+        except Exception as e:
+            retry_count += 1
+            if retry_count == max_retries:
+                st.error(f"Error processing file {file_name} after {max_retries} attempts: {str(e)}")
+                return None
+            st.warning(f"Retrying {file_name} (attempt {retry_count + 1}/{max_retries})...")
+            time.sleep(1)  # Wait before retrying
 
 def process_bulk_upload(uploaded_files):
-    """Process multiple files in parallel"""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        # Submit all files for processing
-        future_to_file = {
-            executor.submit(process_single_upload, file): file 
-            for file in uploaded_files
-        }
+    """Process multiple files in parallel with batch processing and memory optimization"""
+    batch_size = 5  # Process 5 files at a time
+    results = []
+    total_files = len(uploaded_files)
+    
+    # Create a progress bar for overall progress
+    progress_bar = st.progress(0)
+    
+    for i in range(0, total_files, batch_size):
+        batch = uploaded_files[i:i + batch_size]
         
-        # Process results as they complete
-        results = []
-        for future in concurrent.futures.as_completed(future_to_file):
-            file = future_to_file[future]
-            try:
-                result = future.result()
-                if result:
-                    results.append((file.name, True))
-                else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
+            future_to_file = {
+                executor.submit(
+                    process_single_upload,
+                    file.getvalue(),
+                    file.name,
+                    st.session_state.user_id
+                ): file 
+                for file in batch
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_file):
+                file = future_to_file[future]
+                try:
+                    result = future.result()
+                    results.append((file.name, bool(result)))
+                except Exception as e:
                     results.append((file.name, False))
-            except Exception as e:
-                results.append((file.name, False))
-                st.error(f"Error processing {file.name}: {str(e)}")
+                    st.error(f"Error processing {file.name}: {str(e)}")
         
-        return results
+        # Update overall progress
+        progress = min(1.0, (i + batch_size) / total_files)
+        progress_bar.progress(progress, f"Processing files... ({i + len(batch)}/{total_files})")
+    
+    # Show completion
+    progress_bar.progress(1.0, "Complete!")
+    time.sleep(1)
+    
+    return results
 
 def main():
     st.set_page_config(
@@ -120,12 +151,17 @@ def main():
         
         if uploaded_file:
             if st.button("Process Single Upload"):
-                with st.spinner("Processing resume..."):
-                    result = process_single_upload(uploaded_file, st.session_state.user_id)
-                    if result:
-                        st.success(f"Successfully processed {uploaded_file.name}!")
-                        if st.button("Upload Another Resume"):
-                            st.rerun()
+                result = process_single_upload(
+                    uploaded_file.getvalue(),
+                    uploaded_file.name,
+                    st.session_state.user_id
+                )
+                if result:
+                    st.success(f"Successfully processed {uploaded_file.name}!")
+                    if st.button("Upload Another Resume"):
+                        # Clear the file uploader and refresh the page
+                        st.session_state.clear()
+                        st.rerun()
 
     with col2:
         st.subheader("Bulk Upload")
@@ -138,20 +174,22 @@ def main():
         
         if uploaded_files:
             if st.button("Process Bulk Upload"):
-                with st.spinner("Processing multiple files..."):
-                    results = process_bulk_upload(uploaded_files)
-                    success_count = sum(1 for _, success in results if success)
-                    
-                    # Show detailed results
-                    st.success(f"Successfully processed {success_count} out of {len(uploaded_files)} files")
-                    
-                    # Show failed files if any
-                    failed_files = [name for name, success in results if not success]
-                    if failed_files:
-                        st.warning(f"Failed to process: {', '.join(failed_files)}")
-                    
-                    if st.button("Upload More Resumes"):
-                        st.rerun()
+                results = process_bulk_upload(uploaded_files)
+                success_count = sum(1 for _, success in results if success)
+                
+                # Show success message
+                st.success(f"Successfully processed {success_count} out of {len(uploaded_files)} files")
+                
+                # Show failed files if any
+                failed_files = [name for name, success in results if not success]
+                if failed_files:
+                    st.warning(f"Failed to process: {', '.join(failed_files)}")
+                
+                # Add a button to clear the file uploader
+                if st.button("Upload More Resumes"):
+                    # Clear the file uploader and refresh the page
+                    st.session_state.clear()
+                    st.rerun()
 
     # Add a logout button at the bottom
     st.markdown("---")
