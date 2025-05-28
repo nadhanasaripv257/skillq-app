@@ -151,4 +151,81 @@ class OpenAIClient:
             return filters
 
         except Exception as e:
-            raise Exception(f"Error extracting filters with OpenAI: {str(e)}") 
+            raise Exception(f"Error extracting filters with OpenAI: {str(e)}")
+
+    def rank_candidates(self, recruiter_query: str, candidates: list, top_n: int = 5) -> list:
+        """
+        Rank candidates based on their relevance to the recruiter's query using OpenAI.
+        
+        Args:
+            recruiter_query (str): The original recruiter query in natural language
+            candidates (list): List of candidate dictionaries from Supabase
+            top_n (int): Number of top candidates to rank (default: 5)
+        
+        Returns:
+            list: List of ranked candidates with scores and explanations
+        """
+        try:
+            # Take top N candidates
+            candidates_to_rank = candidates[:top_n]
+            ranked_candidates = []
+            
+            for candidate in candidates_to_rank:
+                # Construct the prompt
+                prompt = f"""You are an expert technical recruiter. Based on the following recruiter query:
+
+"{recruiter_query}"
+
+Evaluate this candidate profile:
+
+- Name: {candidate['full_name']}
+- Title: {candidate['current_or_last_job_title']}
+- Experience: {candidate['total_years_experience']} years
+- Skills: {', '.join(candidate['skills'])}
+- Location: {candidate['location']}
+- Education: {', '.join(candidate.get('education', ['Not provided']))}
+
+Give a relevance score from 0–10 and list 2–3 short bullet points explaining your reasoning.
+Format your response as:
+Score: [number]
+Reasoning:
+- [bullet point 1]
+- [bullet point 2]
+- [bullet point 3]"""
+
+                # Get response from OpenAI
+                response = self.client.chat.completions.create(
+                    model="gpt-4-turbo-preview",
+                    messages=[
+                        {"role": "system", "content": "You are an expert technical recruiter evaluating candidate profiles."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=500
+                )
+                
+                # Parse the response
+                response_text = response.choices[0].message.content
+                
+                # Extract score and reasoning
+                score_line = response_text.split('\n')[0]
+                score = int(score_line.split(':')[1].strip())
+                
+                reasoning_lines = response_text.split('Reasoning:')[1].strip().split('\n')
+                reasoning = [line.strip('- ').strip() for line in reasoning_lines if line.strip()]
+                
+                # Add to ranked candidates
+                ranked_candidates.append({
+                    'candidate': candidate,
+                    'score': score,
+                    'reasoning': reasoning
+                })
+            
+            # Sort by score in descending order
+            ranked_candidates.sort(key=lambda x: x['score'], reverse=True)
+            
+            return ranked_candidates
+            
+        except Exception as e:
+            logger.error(f"Error ranking candidates: {str(e)}")
+            return [] 

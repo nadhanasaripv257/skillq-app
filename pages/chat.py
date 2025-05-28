@@ -262,34 +262,102 @@ def refine_search_candidates(query, current_filters):
         return [], current_filters
 
 def format_candidate_response(candidates):
-    """Format candidate search results into a table"""
+    """Format candidate search results into a table with rankings"""
     if not candidates:
         return "I couldn't find any candidates matching your criteria."
     
-    # Create a DataFrame for display
-    df = pd.DataFrame(candidates)
-    
-    # Select and rename columns for display
-    display_df = df[['full_name', 'skills', 'total_years_experience', 'location', 'current_or_last_job_title']]
-    display_df.columns = ['Name', 'Skills', 'Experience (years)', 'Location', 'Current Job Title']
-    
-    # Format skills as comma-separated string
-    display_df['Skills'] = display_df['Skills'].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
-    
-    # Display the table
-    st.dataframe(
-        display_df,
-        column_config={
-            "Name": st.column_config.TextColumn("Name", width="medium"),
-            "Skills": st.column_config.TextColumn("Skills", width="large"),
-            "Experience (years)": st.column_config.NumberColumn("Experience (years)", width="small"),
-            "Location": st.column_config.TextColumn("Location", width="medium"),
-            "Current Job Title": st.column_config.TextColumn("Current Job Title", width="large")
-        },
-        hide_index=True
+    # Get ranked candidates
+    ranked_candidates = openai_client.rank_candidates(
+        st.session_state.last_query,
+        candidates
     )
     
-    return f"Found {len(candidates)} matching candidates."
+    # Display ranked results
+    st.markdown("### 🏆 Ranked Candidates")
+    
+    for idx, ranked in enumerate(ranked_candidates, 1):
+        candidate = ranked['candidate']
+        
+        # Create an expander for each candidate
+        with st.expander(f"#{idx} {candidate['full_name']} - Score: {ranked['score']}/10", expanded=True):
+            # Display candidate details in columns
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.markdown(f"**Current Role:** {candidate['current_or_last_job_title']}")
+                st.markdown(f"**Experience:** {candidate['total_years_experience']} years")
+                st.markdown(f"**Location:** {candidate['location']}")
+                st.markdown("**Skills:**")
+                st.markdown(", ".join(candidate['skills']))
+                
+                if 'education' in candidate and candidate['education']:
+                    st.markdown("**Education:**")
+                    st.markdown(", ".join(candidate['education']))
+            
+            with col2:
+                st.markdown("**Match Reasoning:**")
+                for reason in ranked['reasoning']:
+                    st.markdown(f"• {reason}")
+            
+            # Add a button to view full profile
+            if st.button("View Full Profile", key=f"view_profile_{candidate['id']}"):
+                display_candidate_profile(candidate)
+    
+    return f"Found and ranked {len(ranked_candidates)} matching candidates."
+
+def display_candidate_profile(candidate):
+    """Display detailed candidate profile in a modal"""
+    st.markdown("### 📋 Full Candidate Profile")
+    
+    # Create two columns for better layout
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Personal Information")
+        st.markdown(f"**Name:** {candidate['full_name']}")
+        st.markdown(f"**Location:** {candidate['location']}")
+        if 'email' in candidate:
+            st.markdown(f"**Email:** {candidate['email']}")
+        if 'phone' in candidate:
+            st.markdown(f"**Phone:** {candidate['phone']}")
+        if 'linkedin_url' in candidate:
+            st.markdown(f"**LinkedIn:** {candidate['linkedin_url']}")
+    
+    with col2:
+        st.markdown("#### Professional Information")
+        st.markdown(f"**Current Role:** {candidate['current_or_last_job_title']}")
+        st.markdown(f"**Experience:** {candidate['total_years_experience']} years")
+        if 'employment_type' in candidate:
+            st.markdown(f"**Employment Type:** {candidate['employment_type']}")
+        if 'availability' in candidate:
+            st.markdown(f"**Availability:** {candidate['availability']}")
+    
+    # Skills and Tools
+    st.markdown("#### Skills & Tools")
+    if 'skills' in candidate:
+        st.markdown("**Skills:**")
+        st.markdown(", ".join(candidate['skills']))
+    if 'tools_technologies' in candidate:
+        st.markdown("**Tools & Technologies:**")
+        st.markdown(", ".join(candidate['tools_technologies']))
+    
+    # Education and Certifications
+    st.markdown("#### Education & Certifications")
+    if 'education' in candidate:
+        st.markdown("**Education:**")
+        st.markdown(", ".join(candidate['education']))
+    if 'certifications' in candidate:
+        st.markdown("**Certifications:**")
+        st.markdown(", ".join(candidate['certifications']))
+    
+    # Additional Information
+    if 'summary_statement' in candidate:
+        st.markdown("#### Summary")
+        st.markdown(candidate['summary_statement'])
+    
+    if 'languages_spoken' in candidate:
+        st.markdown("#### Languages")
+        st.markdown(", ".join(candidate['languages_spoken']))
 
 def format_current_filters(filters):
     """Format current filters for display"""
