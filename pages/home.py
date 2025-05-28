@@ -309,8 +309,22 @@ def main():
 
     display_name = profile.get('full_name', '') if profile else st.session_state.user_email
 
-    st.title("🏠 Welcome to SkillQ")
-    st.write(f"Hello, {display_name}!")
+    # Create a container for the header with logout button
+    header_container = st.container()
+    with header_container:
+        col1, col2 = st.columns([0.8, 0.2])
+        with col1:
+            st.title("🏠 Welcome to SkillQ")
+            st.write(f"Hello, {display_name}!")
+        with col2:
+            st.write("")  # Add some vertical space
+            if st.button("Logout", key="logout_top"):
+                st.session_state.authenticated = False
+                st.session_state.user_email = None
+                st.session_state.dashboard_initialized = False
+                st.session_state.page = "Login"
+                st.session_state.refresh_key = time.time()
+                st.switch_page("pages/login.py")
 
     # Create three columns for different sections
     col1, col2, col3 = st.columns(3)
@@ -384,16 +398,6 @@ def main():
             st.dataframe(recent_candidates, use_container_width=True)
     else:
         st.warning("No candidate data available. Please upload some resumes first.")
-
-    # Add a logout button at the bottom
-    st.markdown("---")
-    if st.button("Logout"):
-        st.session_state.authenticated = False
-        st.session_state.user_email = None
-        st.session_state.dashboard_initialized = False
-        st.session_state.page = "Login"
-        st.session_state.refresh_key = time.time()
-        st.switch_page("pages/login.py")
 
 if __name__ == "__main__":
     main() 

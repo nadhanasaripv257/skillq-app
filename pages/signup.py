@@ -64,7 +64,7 @@ def main():
                 st.session_state.authenticated = False
                 st.session_state.user_email = None
                 st.session_state.needs_verification = False
-                st.switch_page("login.py")
+                st.switch_page("pages/login.py")
         else:
             st.switch_page("pages/home.py")
         return
@@ -89,10 +89,16 @@ def main():
                 if signup_user(email, password):
                     st.rerun()
     
+    # Add signup link
+    st.markdown("---")
+    st.write("Don't have an account?")
+    if st.button("Sign Up"):
+        st.switch_page("pages/signup.py")
+
     # Login link
     st.markdown("---")
     if st.button("Already have an account? Login here"):
-        st.switch_page("login.py")
+        st.switch_page("pages/login.py")
 
 if __name__ == "__main__":
     main() 
