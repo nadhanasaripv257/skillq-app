@@ -32,7 +32,7 @@ def main():
     
     # If already authenticated, redirect to home
     if st.session_state.authenticated:
-        st.switch_page("app.py")
+        st.switch_page("pages/home.py")
         return
 
     st.title("🔐 Login to SkillQ")
@@ -56,7 +56,7 @@ def main():
                     st.session_state.user_email = email
                     st.session_state.user_id = response.user.id
                     st.success("Login successful!")
-                    st.switch_page("app.py")
+                    st.switch_page("pages/home.py")
                 else:
                     st.error("Invalid email or password")
             except Exception as e:

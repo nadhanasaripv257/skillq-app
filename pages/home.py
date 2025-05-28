@@ -24,7 +24,7 @@ def initialize_session_state():
     if 'user_email' not in st.session_state:
         st.session_state.user_email = None
     if 'page' not in st.session_state:
-        st.session_state.page = "Home"
+        st.session_state.page = None
     if 'dashboard_initialized' not in st.session_state:
         st.session_state.dashboard_initialized = False
     if 'refresh_key' not in st.session_state:
@@ -284,19 +284,18 @@ def main():
     # Initialize session state
     initialize_session_state()
     
-    # Force refresh when returning to home page
-    if st.session_state.page == "Home":
+    # Force refresh on first load or when coming from login
+    if st.session_state.page != "Home":
+        st.session_state.page = "Home"
         st.session_state.refresh_key = time.time()
-    
-    # Set current page
-    st.session_state.page = "Home"
+        st.session_state.dashboard_initialized = False
     
     # Check if user is authenticated
     if not st.session_state.authenticated:
         st.warning("Please login to access this page")
         if st.button("Go to Login"):
             st.session_state.page = "Login"
-            st.switch_page("login.py")
+            st.switch_page("pages/login.py")
         return
 
     # Get user profile
@@ -305,7 +304,7 @@ def main():
         st.error("Error loading profile. Please try logging in again.")
         if st.button("Go to Login"):
             st.session_state.page = "Login"
-            st.switch_page("login.py")
+            st.switch_page("pages/login.py")
         return
 
     display_name = profile.get('full_name', '') if profile else st.session_state.user_email
@@ -394,7 +393,7 @@ def main():
         st.session_state.dashboard_initialized = False
         st.session_state.page = "Login"
         st.session_state.refresh_key = time.time()
-        st.switch_page("login.py")
+        st.switch_page("pages/login.py")
 
 if __name__ == "__main__":
     main() 
