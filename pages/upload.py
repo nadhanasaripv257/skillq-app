@@ -160,7 +160,8 @@ def main():
 
     # Add back button at the top
     if st.button("← Back to Home"):
-        st.switch_page("app.py")
+        st.session_state.page = "Home"
+        st.switch_page("pages/home.py")
 
     st.title("📄 Resume Upload")
     st.write(f"Welcome, {st.session_state.user_email}!")
