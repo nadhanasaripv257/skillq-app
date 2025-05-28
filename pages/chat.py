@@ -42,6 +42,10 @@ def initialize_session_state():
         st.session_state.last_query = None
     if 'current_filters' not in st.session_state:
         st.session_state.current_filters = None
+    if 'last_outreach_time' not in st.session_state:
+        st.session_state.last_outreach_time = {}
+    if 'outreach_count' not in st.session_state:
+        st.session_state.outreach_count = {}
 
 def get_candidate_skills():
     """Get all candidate skills from resumes and organize them by category"""
@@ -261,6 +265,29 @@ def refine_search_candidates(query, current_filters):
         logger.error(f"Error searching candidates: {str(e)}", exc_info=True)
         return [], current_filters
 
+def can_generate_outreach(candidate_id: str) -> bool:
+    """Check if we can generate outreach for this candidate based on rate limiting"""
+    current_time = time.time()
+    last_time = st.session_state.last_outreach_time.get(candidate_id, 0)
+    count = st.session_state.outreach_count.get(candidate_id, 0)
+    
+    # Reset count if more than 1 hour has passed
+    if current_time - last_time > 3600:
+        st.session_state.outreach_count[candidate_id] = 0
+        return True
+    
+    # Allow max 5 requests per hour
+    if count >= 5:
+        return False
+    
+    return True
+
+def update_outreach_count(candidate_id: str):
+    """Update the outreach count for rate limiting"""
+    current_time = time.time()
+    st.session_state.last_outreach_time[candidate_id] = current_time
+    st.session_state.outreach_count[candidate_id] = st.session_state.outreach_count.get(candidate_id, 0) + 1
+
 def format_candidate_response(candidates):
     """Format candidate search results into a table with rankings"""
     if not candidates:
@@ -305,6 +332,10 @@ def format_candidate_response(candidates):
                 st.session_state[outreach_key] = None
             
             if st.button("✉️ Generate Outreach & Questions", key=f"generate_outreach_{candidate['id']}"):
+                if not can_generate_outreach(candidate['id']):
+                    st.error("Rate limit exceeded. Please try again in an hour.")
+                    continue
+                
                 with st.spinner("Generating personalized outreach..."):
                     # Get user ID from session
                     user_response = supabase.auth.get_user()
@@ -314,10 +345,14 @@ def format_candidate_response(candidates):
                     
                     recruiter_id = user_response.user.id
                     
-                    # Check if we have cached outreach data
-                    cache_key = f"outreach_cache_{candidate['id']}_{st.session_state.last_query}"
-                    if cache_key in st.session_state:
-                        outreach_data = st.session_state[cache_key]
+                    # Check Supabase cache first
+                    cached_data = supabase.get_cached_outreach(
+                        candidate['id'],
+                        st.session_state.last_query
+                    )
+                    
+                    if cached_data:
+                        outreach_data = cached_data
                     else:
                         # Generate new outreach data
                         outreach_data = openai_client.generate_outreach(
@@ -325,7 +360,12 @@ def format_candidate_response(candidates):
                             original_query=st.session_state.last_query
                         )
                         # Cache the result
-                        st.session_state[cache_key] = outreach_data
+                        supabase.cache_outreach_message(
+                            candidate['id'],
+                            st.session_state.last_query,
+                            outreach_data
+                        )
+                        update_outreach_count(candidate['id'])
                     
                     # Store in session state for persistence
                     st.session_state[outreach_key] = outreach_data

@@ -2,6 +2,7 @@ import os
 from openai import OpenAI
 from typing import Dict, List
 import json
+import time
 
 class OpenAIClient:
     def __init__(self):
@@ -232,9 +233,13 @@ Reasoning:
 
     def generate_outreach(self, candidate, original_query):
         """Generate personalized outreach message and 3 HR screening questions"""
-        try:
-            # Prepare the prompt
-            prompt = f"""As an HR professional, generate a personalized outreach message and 3 highly targeted HR screening questions for this candidate:
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Prepare the prompt
+                prompt = f"""As an HR professional, generate a personalized outreach message and 3 highly targeted HR screening questions for this candidate:
 
 Candidate Details:
 - Name: {candidate['full_name']}
@@ -265,27 +270,49 @@ Format the response as JSON with two fields:
     "screening_questions": ["question1", "question2", "question3"]
 }}"""
 
-            # Call OpenAI API
-            response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": "You are an experienced HR professional who specializes in candidate outreach and screening. Focus on generating highly personalized questions that are specific to the candidate's background and the role they're being considered for."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"}
-            )
-            
-            # Parse the response
-            result = json.loads(response.choices[0].message.content)
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error generating outreach: {str(e)}")
-            return {
-                "outreach_message": "Error generating personalized message. Please try again.",
-                "screening_questions": [
-                    "Given your experience in [role], what aspects of this opportunity interest you most?",
-                    "How has your background in [skills] prepared you for this role?",
-                    "What are your expectations regarding career growth in this position?"
-                ]
-            } 
+                # Call OpenAI API with retry logic
+                try:
+                    response = self.client.chat.completions.create(
+                        model="gpt-4-turbo-preview",
+                        messages=[
+                            {"role": "system", "content": "You are an experienced HR professional who specializes in candidate outreach and screening. Focus on generating highly personalized questions that are specific to the candidate's background and the role they're being considered for."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.7,  # Add some creativity while maintaining professionalism
+                        max_tokens=1000   # Limit response length
+                    )
+                except Exception as api_error:
+                    logger.error(f"OpenAI API error (attempt {attempt + 1}/{max_retries}): {str(api_error)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                        continue
+                    raise
+                
+                # Parse the response
+                result = json.loads(response.choices[0].message.content)
+                
+                # Validate the response structure
+                if not isinstance(result, dict) or 'outreach_message' not in result or 'screening_questions' not in result:
+                    raise ValueError("Invalid response structure from OpenAI API")
+                
+                if not isinstance(result['screening_questions'], list) or len(result['screening_questions']) != 3:
+                    raise ValueError("Invalid screening questions format")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error generating outreach (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                
+                # Return a fallback response on final failure
+                return {
+                    "outreach_message": f"Hi {candidate['full_name']},\n\nI came across your profile and was impressed by your experience in {candidate['current_or_last_job_title']}. Your background in {', '.join(candidate['skills'][:3])} aligns well with what we're looking for.\n\nWould you be open to discussing this opportunity further?\n\nBest regards,\n[Your Name]",
+                    "screening_questions": [
+                        f"Given your experience in {candidate['current_or_last_job_title']}, what aspects of this opportunity interest you most?",
+                        f"How has your background in {', '.join(candidate['skills'][:2])} prepared you for this role?",
+                        "What are your expectations regarding career growth in this position?"
+                    ]
+                } 

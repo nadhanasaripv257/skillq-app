@@ -338,6 +338,16 @@ def main():
             st.session_state.page = "Profile"
             st.switch_page("pages/profile.py")
 
+    # Add Candidate Tracker section
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.subheader("👥 Candidate Tracker")
+        st.write("Track your contacted candidates and follow-ups")
+        if st.button("View Candidate Tracker"):
+            st.session_state.page = "Tracker"
+            st.switch_page("pages/candidate_tracker.py")
+
     # Dashboard Section - Always show when on home page
     st.markdown("---")
     st.subheader("📊 Quick Look at Your Candidate Portfolio")

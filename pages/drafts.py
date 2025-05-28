@@ -27,18 +27,21 @@ def initialize_session_state():
         st.session_state.drafts_per_page = 5
     if 'refresh_key' not in st.session_state:
         st.session_state.refresh_key = time.time()
+    if 'drafts_df' not in st.session_state:
+        st.session_state.drafts_df = None
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_recruiter_drafts(recruiter_id, page=1, per_page=5, refresh_key=None):
-    """Get recruiter drafts with pagination"""
+def get_drafts(recruiter_id, page=1, per_page=5, refresh_key=None):
+    """Get drafts with pagination"""
     try:
         # Calculate offset
         offset = (page - 1) * per_page
         
-        # Get drafts with candidate info including contact details
+        # Get drafts with their details
         response = supabase.table('recruiter_notes')\
             .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
             .eq('recruiter_id', recruiter_id)\
+            .eq('contact_status', False)\
             .order('created_at', desc=True)\
             .range(offset, offset + per_page - 1)\
             .execute()
@@ -50,6 +53,7 @@ def get_recruiter_drafts(recruiter_id, page=1, per_page=5, refresh_key=None):
         count_response = supabase.table('recruiter_notes')\
             .select('id', count='exact')\
             .eq('recruiter_id', recruiter_id)\
+            .eq('contact_status', False)\
             .execute()
             
         total_count = count_response.count if count_response.count is not None else 0
@@ -103,7 +107,7 @@ def get_user_profile(refresh_key=None):
 def main():
     st.set_page_config(
         page_title="SkillQ - My Drafts",
-        page_icon="📁",
+        page_icon="📝",
         layout="wide"
     )
     
@@ -120,7 +124,7 @@ def main():
     # Get user ID and profile
     user_response = supabase.auth.get_user()
     if not user_response.user:
-        st.error("Please log in to view your drafts")
+        st.error("Please log in to view drafts")
         if st.button("Go to Login"):
             st.switch_page("pages/login.py")
         return
@@ -139,8 +143,8 @@ def main():
         st.switch_page("pages/home.py")
 
     # Header
-    st.title("📁 My Drafts")
-    st.write("View and manage your saved outreach messages and screening questions")
+    st.title("📝 My Drafts")
+    st.write("Manage your candidate outreach drafts")
 
     # Add refresh button
     if st.button("🔄 Refresh"):
@@ -148,7 +152,7 @@ def main():
         st.rerun()
 
     # Get drafts with pagination
-    drafts, total_count = get_recruiter_drafts(
+    drafts, total_count = get_drafts(
         recruiter_id,
         st.session_state.drafts_page,
         st.session_state.drafts_per_page,
@@ -156,7 +160,7 @@ def main():
     )
 
     if not drafts:
-        st.info("No drafts found. Start by generating outreach messages for candidates.")
+        st.info("No drafts found. Start by creating outreach messages for candidates.")
         return
 
     # Create a table of drafts
@@ -165,112 +169,150 @@ def main():
     # Prepare data for the table
     table_data = []
     for draft in drafts:
-        candidate = draft['resumes']
-        # Create a unique anchor ID for each candidate
-        anchor_id = f"candidate_{draft['id']}"
+        resume = draft['resumes']
+        try:
+            follow_up_date = pd.to_datetime(draft.get('follow_up_date')) if draft.get('follow_up_date') else None
+        except (ValueError, TypeError):
+            follow_up_date = None
+            
         table_data.append({
-            'Candidate Name': candidate["full_name"],
-            'View Details': f"#{anchor_id}",
-            'Current Role': candidate['current_or_last_job_title'],
-            'Location': candidate['location'],
-            'Email': candidate.get('email', 'N/A'),
-            'Phone': candidate.get('phone', 'N/A'),
-            'LinkedIn': candidate.get('linkedin_url', 'N/A'),
-            'Created': format_timestamp(draft['created_at']),
-            'Last Updated': format_timestamp(draft.get('updated_at', draft['created_at']))
+            'id': draft['id'],
+            'Candidate Name': resume["full_name"],
+            'Current Role': resume['current_or_last_job_title'],
+            'Location': resume['location'],
+            'Email': resume.get('email', 'N/A'),
+            'Phone': resume.get('phone', 'N/A'),
+            'LinkedIn': resume.get('linkedin_url', 'N/A'),
+            'Contacted': draft.get('contact_status', False),
+            'Follow-up Required': draft.get('follow_up_required', False),
+            'Follow-up Date': follow_up_date,
+            'Created': format_timestamp(draft['created_at'])
         })
     
-    # Display the table with HTML formatting enabled
+    # Create DataFrame
     df = pd.DataFrame(table_data)
-    st.dataframe(
+    
+    # Store the dataframe in session state
+    st.session_state.drafts_df = df
+    
+    # Display the dataframe with editable columns
+    edited_df = st.data_editor(
         df,
         use_container_width=True,
         hide_index=True,
         column_config={
+            "id": st.column_config.NumberColumn(
+                "ID",
+                help="Internal ID",
+                disabled=True,
+                required=True
+            ),
             "Candidate Name": st.column_config.TextColumn(
                 "Candidate Name",
-                help="Candidate's full name"
+                help="Candidate's full name",
+                disabled=True
             ),
-            "View Details": st.column_config.LinkColumn(
-                "View Details",
-                help="Click to view candidate details",
-                display_text="View Details"
+            "Contacted": st.column_config.CheckboxColumn(
+                "Contacted",
+                help="Check if you have contacted this candidate",
+                default=False,
+                required=True
+            ),
+            "Follow-up Required": st.column_config.CheckboxColumn(
+                "Follow-up Required",
+                help="Check if follow-up is required",
+                default=False,
+                required=True
+            ),
+            "Follow-up Date": st.column_config.DateColumn(
+                "Follow-up Date",
+                help="Date when follow-up should be done",
+                format="YYYY-MM-DD",
+                step=1
             )
-        }
+        },
+        disabled=["id", "Candidate Name", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Created"]
     )
+
+    # Save contact status changes
+    if st.button("💾 Save Contact Status Changes"):
+        try:
+            # Get the current state of the dataframe
+            updated_df = edited_df
+            
+            # Update each draft's contact status
+            for _, row in updated_df.iterrows():
+                try:
+                    follow_up_date = row['Follow-up Date'].strftime('%Y-%m-%d') if pd.notna(row['Follow-up Date']) else None
+                except (AttributeError, ValueError):
+                    follow_up_date = None
+                    
+                data = {
+                    'contact_status': row['Contacted'],
+                    'follow_up_required': row['Follow-up Required'],
+                    'follow_up_date': follow_up_date,
+                    'updated_at': datetime.now(UTC).isoformat()
+                }
+                
+                response = supabase.table('recruiter_notes')\
+                    .update(data)\
+                    .eq('id', row['id'])\
+                    .execute()
+                
+                if hasattr(response, 'error') and response.error:
+                    st.error(f"Error updating contact status: {response.error}")
+                    return
+            
+            st.success("Contact status changes saved successfully!")
+            st.session_state.refresh_key = time.time()
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Error updating contact status: {str(e)}")
+            st.error("Please try again or contact support if the issue persists.")
 
     # Display detailed view for each draft
     st.subheader("📝 Draft Details")
     for draft in drafts:
-        # Add an anchor for scrolling
-        st.markdown(f'<div id="candidate_{draft["id"]}"></div>', unsafe_allow_html=True)
-        with st.expander(f"📝 {draft['resumes']['full_name']} - {draft['resumes']['current_or_last_job_title']}", expanded=True):
+        resume = draft['resumes']
+        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown(f"**Name:** {draft['resumes']['full_name']}")
-                st.markdown(f"**Current Role:** {draft['resumes']['current_or_last_job_title']}")
-                st.markdown(f"**Location:** {draft['resumes']['location']}")
+                st.markdown(f"**Name:** {resume['full_name']}")
+                st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
+                st.markdown(f"**Location:** {resume['location']}")
             with col2:
-                st.markdown(f"**Email:** {draft['resumes'].get('email', 'N/A')}")
-                st.markdown(f"**Phone:** {draft['resumes'].get('phone', 'N/A')}")
-                if draft['resumes'].get('linkedin_url'):
-                    st.markdown(f"**LinkedIn:** [{draft['resumes']['linkedin_url']}]({draft['resumes']['linkedin_url']})")
+                st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
+                st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
+                if resume.get('linkedin_url'):
+                    st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
             
             # Outreach message
             st.markdown("#### Outreach Message")
-            
-            # Add recruiter info to the message
-            recruiter_name = profile.get('full_name', '').split()[0] if profile.get('full_name') else ''
-            company_name = profile.get('company_name', '')
-            
-            # Create a template with recruiter info
-            message_template = draft['outreach_message']
-            if recruiter_name:
-                message_template = message_template.replace("[Your Name]", recruiter_name)
-            if company_name:
-                message_template = message_template.replace("[Your Company]", company_name)
-            
             outreach_message = st.text_area(
-                "Edit the message if needed:",
-                value=message_template,
-                height=150,
-                key=f"outreach_{draft['id']}"
+                "Message:",
+                value=draft['outreach_message'],
+                height=150
             )
             
             # Screening questions
             st.markdown("#### Screening Questions")
-            questions = []
-            for i, question in enumerate(draft['screening_questions'], 1):
-                edited_question = st.text_input(
-                    f"Question {i}:",
-                    value=question,
-                    key=f"question_{draft['id']}_{i}"
-                )
-                questions.append(edited_question)
+            screening_questions = st.text_area(
+                "Questions:",
+                value=draft['screening_questions'],
+                height=100
+            )
             
-            # Action buttons
-            col1, col2, col3 = st.columns(3)
-            
+            # Save changes and move to tracker
+            col1, col2 = st.columns(2)
             with col1:
-                if st.button("📋 Copy Message", key=f"copy_msg_{draft['id']}"):
-                    copy_to_clipboard(outreach_message)
-                    st.success("Message copied to clipboard!")
-            
-            with col2:
-                if st.button("📋 Copy Questions", key=f"copy_q_{draft['id']}"):
-                    questions_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-                    copy_to_clipboard(questions_text)
-                    st.success("Questions copied to clipboard!")
-            
-            with col3:
                 if st.button("💾 Save Changes", key=f"save_{draft['id']}"):
                     try:
-                        # Update the draft
                         data = {
                             'outreach_message': outreach_message,
-                            'screening_questions': questions,
+                            'screening_questions': screening_questions,
                             'updated_at': datetime.now(UTC).isoformat()
                         }
                         
@@ -283,17 +325,41 @@ def main():
                             st.error(f"Error saving changes: {response.error}")
                         else:
                             st.success("Changes saved successfully!")
-                            # Force refresh
                             st.session_state.refresh_key = time.time()
                             st.rerun()
                             
                     except Exception as e:
                         st.error(f"Error saving changes: {str(e)}")
             
-            # Timestamp
+            with col2:
+                if st.button("✅ Mark as Contacted", key=f"contact_{draft['id']}"):
+                    try:
+                        data = {
+                            'contact_status': True,
+                            'outreach_message': outreach_message,
+                            'screening_questions': screening_questions,
+                            'updated_at': datetime.now(UTC).isoformat()
+                        }
+                        
+                        response = supabase.table('recruiter_notes')\
+                            .update(data)\
+                            .eq('id', draft['id'])\
+                            .execute()
+                        
+                        if hasattr(response, 'error') and response.error:
+                            st.error(f"Error marking as contacted: {response.error}")
+                        else:
+                            st.success("Candidate moved to tracker!")
+                            st.session_state.refresh_key = time.time()
+                            st.rerun()
+                            
+                    except Exception as e:
+                        st.error(f"Error marking as contacted: {str(e)}")
+            
+            # Timestamps
             st.markdown(f"*Created: {format_timestamp(draft['created_at'])}*")
             if draft.get('updated_at'):
-                st.markdown(f"*Last updated: {format_timestamp(draft['updated_at'])}*")
+                st.markdown(f"*Last Updated: {format_timestamp(draft['updated_at'])}*")
 
     # Pagination
     total_pages = (total_count + st.session_state.drafts_per_page - 1) // st.session_state.drafts_per_page

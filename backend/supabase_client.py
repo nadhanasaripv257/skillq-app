@@ -7,6 +7,8 @@ import json
 import logging
 from functools import lru_cache
 import tempfile
+import hashlib
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -231,4 +233,50 @@ class SupabaseClient:
 
         except Exception as e:
             logger.error(f"Error saving recruiter notes: {str(e)}")
-            return False 
+            return False
+
+    def cache_outreach_message(self, candidate_id: str, query: str, outreach_data: Dict) -> bool:
+        """Cache outreach message and screening questions in Supabase"""
+        try:
+            # Prepare cache data
+            cache_data = {
+                'candidate_id': candidate_id,
+                'query_hash': hashlib.md5(query.encode()).hexdigest(),
+                'outreach_data': outreach_data,
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'expires_at': (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()  # 7-day TTL
+            }
+
+            # Use upsert to handle both insert and update cases
+            response = self.client.table('outreach_cache').upsert(cache_data).execute()
+            
+            if response.error:
+                logger.error(f"Error caching outreach message: {response.error}")
+                return False
+            
+            return True
+
+        except Exception as e:
+            logger.error(f"Error caching outreach message: {str(e)}")
+            return False
+
+    def get_cached_outreach(self, candidate_id: str, query: str) -> Optional[Dict]:
+        """Retrieve cached outreach message from Supabase"""
+        try:
+            query_hash = hashlib.md5(query.encode()).hexdigest()
+            
+            # Get cached data
+            response = self.client.table('outreach_cache')\
+                .select('*')\
+                .eq('candidate_id', candidate_id)\
+                .eq('query_hash', query_hash)\
+                .lt('expires_at', datetime.now(timezone.utc).isoformat())\
+                .execute()
+            
+            if response.data:
+                return response.data[0]['outreach_data']
+            return None
+
+        except Exception as e:
+            logger.error(f"Error retrieving cached outreach: {str(e)}")
+            return None 
