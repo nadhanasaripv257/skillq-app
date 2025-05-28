@@ -29,6 +29,8 @@ def initialize_session_state():
         st.session_state.refresh_key = time.time()
     if 'drafts_df' not in st.session_state:
         st.session_state.drafts_df = None
+    if 'selected_draft' not in st.session_state:
+        st.session_state.selected_draft = None
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_drafts(recruiter_id, page=1, per_page=5, refresh_key=None):
@@ -178,8 +180,8 @@ def main():
             follow_up_date = None
             
         table_data.append({
+            'Select': False,  # Initialize as False
             'Candidate Name': resume['full_name'],
-            'View Details': f"[View Details](#{anchor_id})",
             'Current Role': resume['current_or_last_job_title'],
             'Location': resume['location'],
             'Email': resume.get('email', 'N/A'),
@@ -203,14 +205,40 @@ def main():
         use_container_width=True,
         hide_index=True,
         column_config={
+            "Select": st.column_config.CheckboxColumn(
+                "Select",
+                help="Select draft to view details",
+                default=False,
+                required=True
+            ),
             "Candidate Name": st.column_config.TextColumn(
                 "Candidate Name",
                 help="Candidate's full name",
                 disabled=True
             ),
-            "View Details": st.column_config.TextColumn(
-                "View Details",
-                help="Click to view draft details",
+            "Current Role": st.column_config.TextColumn(
+                "Current Role",
+                help="Candidate's current or last job title",
+                disabled=True
+            ),
+            "Location": st.column_config.TextColumn(
+                "Location",
+                help="Candidate's location",
+                disabled=True
+            ),
+            "Email": st.column_config.TextColumn(
+                "Email",
+                help="Candidate's email",
+                disabled=True
+            ),
+            "Phone": st.column_config.TextColumn(
+                "Phone",
+                help="Candidate's phone",
+                disabled=True
+            ),
+            "LinkedIn": st.column_config.TextColumn(
+                "LinkedIn",
+                help="Candidate's LinkedIn URL",
                 disabled=True
             ),
             "Contacted": st.column_config.CheckboxColumn(
@@ -232,8 +260,50 @@ def main():
                 step=1
             )
         },
-        disabled=["Candidate Name", "View Details", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Updated"]
+        disabled=["Candidate Name", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Updated"]
     )
+
+    # Add view button below the table
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("👁 View Details", use_container_width=True):
+            # Get the selected draft
+            selected = edited_df[edited_df['Select'] == True]
+            if len(selected) == 0:
+                st.warning("Please select a draft to view details")
+            elif len(selected) > 1:
+                st.warning("Please select only one draft to view details")
+            else:
+                # Get the selected draft's name and convert to ID format
+                selected_name = selected.iloc[0]['Candidate Name']
+                st.session_state.selected_draft = selected_name.lower().replace(' ', '-')
+                
+                # Add JavaScript to scroll to the selected draft's section
+                js = f"""
+                <script>
+                    // Function to scroll to element
+                    function scrollToElement() {{
+                        const element = document.getElementById('{st.session_state.selected_draft}');
+                        if (element) {{
+                            // Scroll to the element with smooth behavior
+                            element.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                            // Add some padding to the top
+                            window.scrollBy(0, -20);
+                        }}
+                    }}
+
+                    // Try to scroll immediately
+                    scrollToElement();
+
+                    // Also try after a short delay to ensure everything is loaded
+                    setTimeout(scrollToElement, 500);
+                    
+                    // And try again after a longer delay
+                    setTimeout(scrollToElement, 1000);
+                </script>
+                """
+                st.components.v1.html(js, height=0)
+                st.rerun()
 
     # Save changes to follow-up status
     if st.button("💾 Save Changes"):
@@ -281,7 +351,14 @@ def main():
     st.subheader("📝 Draft Details")
     for draft in drafts:
         resume = draft['resumes']
-        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
+        # Create anchor for this draft
+        anchor_id = resume['full_name'].lower().replace(' ', '-')
+        st.markdown(f"<div id='{anchor_id}'></div>", unsafe_allow_html=True)
+        
+        # Expand the section if this is the selected draft
+        is_expanded = st.session_state.selected_draft == anchor_id
+        
+        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=is_expanded):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)

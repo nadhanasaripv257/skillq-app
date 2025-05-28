@@ -322,31 +322,27 @@ def main():
             st.switch_page("pages/chat.py")
 
     with col3:
-        st.subheader("📁 My Drafts")
-        st.write("View and manage your saved outreach messages")
-        if st.button("View My Drafts"):
-            st.session_state.page = "Drafts"
-            st.switch_page("pages/drafts.py")
-
-    # Add Profile Settings section
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
         st.subheader("👤 Profile Settings")
         st.write("Update your profile information")
         if st.button("Edit Profile"):
             st.session_state.page = "Profile"
             st.switch_page("pages/profile.py")
 
+    # Add My Drafts section
+    st.markdown("---")
+    st.subheader("📁 My Drafts")
+    st.write("View and manage your saved outreach messages")
+    if st.button("View My Drafts", use_container_width=True):
+        st.session_state.page = "Drafts"
+        st.switch_page("pages/drafts.py")
+
     # Add Candidate Tracker section
     st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.subheader("👥 Candidate Tracker")
-        st.write("Track your contacted candidates and follow-ups")
-        if st.button("View Candidate Tracker"):
-            st.session_state.page = "Tracker"
-            st.switch_page("pages/candidate_tracker.py")
+    st.subheader("👥 Candidate Tracker")
+    st.write("Track your contacted candidates and follow-ups")
+    if st.button("View Candidate Tracker", use_container_width=True):
+        st.session_state.page = "Tracker"
+        st.switch_page("pages/candidate_tracker.py")
 
     # Dashboard Section - Always show when on home page
     st.markdown("---")

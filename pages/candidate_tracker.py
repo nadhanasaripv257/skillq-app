@@ -27,6 +27,10 @@ def initialize_session_state():
         st.session_state.tracker_per_page = 5
     if 'refresh_key' not in st.session_state:
         st.session_state.refresh_key = time.time()
+    if 'selected_candidate' not in st.session_state:
+        st.session_state.selected_candidate = None
+    if 'selected_candidates' not in st.session_state:
+        st.session_state.selected_candidates = set()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_contacted_candidates(recruiter_id, refresh_key=None, filter_date=None):
@@ -149,8 +153,6 @@ def main():
     table_data = []
     for candidate in candidates:
         resume = candidate['resumes']
-        # Create a unique anchor ID for each candidate
-        anchor_id = resume['full_name'].lower().replace(' ', '-')
         
         # Handle follow-up date
         follow_up_date = None
@@ -163,8 +165,8 @@ def main():
                 follow_up_date = None
             
         table_data.append({
+            'Select': False,  # Initialize as False
             'Candidate Name': resume['full_name'],
-            'View Details': f"[View Details](#{anchor_id})",
             'Current Role': resume['current_or_last_job_title'],
             'Location': resume['location'],
             'Email': resume.get('email', 'N/A'),
@@ -184,14 +186,15 @@ def main():
         use_container_width=True,
         hide_index=True,
         column_config={
+            "Select": st.column_config.CheckboxColumn(
+                "Select",
+                help="Select candidate to view details",
+                default=False,
+                required=True
+            ),
             "Candidate Name": st.column_config.TextColumn(
                 "Candidate Name",
                 help="Candidate's full name",
-                disabled=True
-            ),
-            "View Details": st.column_config.TextColumn(
-                "View Details",
-                help="Click to view candidate details",
                 disabled=True
             ),
             "Follow-up Required": st.column_config.CheckboxColumn(
@@ -207,8 +210,50 @@ def main():
                 step=1
             )
         },
-        disabled=["Candidate Name", "View Details", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Contact"]
+        disabled=["Candidate Name", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Contact"]
     )
+
+    # Add view button below the table
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("👁 View Details", use_container_width=True):
+            # Get the selected candidate
+            selected = edited_df[edited_df['Select'] == True]
+            if len(selected) == 0:
+                st.warning("Please select a candidate to view details")
+            elif len(selected) > 1:
+                st.warning("Please select only one candidate to view details")
+            else:
+                # Get the selected candidate's name and convert to ID format
+                selected_name = selected.iloc[0]['Candidate Name']
+                st.session_state.selected_candidate = selected_name.lower().replace(' ', '-')
+                
+                # Add JavaScript to scroll to the selected candidate's section
+                js = f"""
+                <script>
+                    // Function to scroll to element
+                    function scrollToElement() {{
+                        const element = document.getElementById('{st.session_state.selected_candidate}');
+                        if (element) {{
+                            // Scroll to the element with smooth behavior
+                            element.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                            // Add some padding to the top
+                            window.scrollBy(0, -20);
+                        }}
+                    }}
+
+                    // Try to scroll immediately
+                    scrollToElement();
+
+                    // Also try after a short delay to ensure everything is loaded
+                    setTimeout(scrollToElement, 500);
+                    
+                    // And try again after a longer delay
+                    setTimeout(scrollToElement, 1000);
+                </script>
+                """
+                st.components.v1.html(js, height=0)
+                st.rerun()
 
     # Save changes to follow-up status
     if st.button("💾 Save Follow-up Changes"):
@@ -260,7 +305,14 @@ def main():
     st.subheader("📝 Candidate Details")
     for candidate in candidates:
         resume = candidate['resumes']
-        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
+        # Create anchor for this candidate
+        anchor_id = resume['full_name'].lower().replace(' ', '-')
+        st.markdown(f"<div id='{anchor_id}'></div>", unsafe_allow_html=True)
+        
+        # Expand the section if this is the selected candidate
+        is_expanded = st.session_state.selected_candidate == anchor_id
+        
+        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=is_expanded):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
