@@ -97,4 +97,58 @@ class OpenAIClient:
             return parsed_data
 
         except Exception as e:
-            raise Exception(f"Error parsing resume with OpenAI: {str(e)}") 
+            raise Exception(f"Error parsing resume with OpenAI: {str(e)}")
+
+    def extract_query_filters(self, query: str) -> Dict:
+        """
+        Extract search filters from a natural language query using OpenAI API
+        """
+        try:
+            prompt = """
+            Extract search filters from the given query. Return a JSON object with the following structure:
+            {
+                "role": "string or null",  // The main role/title being searched for
+                "related_roles": ["string"],  // Related roles that could also match
+                "related_keywords": ["string"],  // Keywords related to the role
+                "location": "string or null",  // Location if specified
+                "required_skills": ["string"],  // Required skills mentioned
+                "experience_years_min": number or null  // Minimum years of experience if specified
+            }
+
+            Examples:
+            Query: "Find me Python developers in Sydney with 3 years of experience"
+            Response: {
+                "role": "Python Developer",
+                "related_roles": ["Software Developer", "Backend Developer"],
+                "related_keywords": ["Python", "Development"],
+                "location": "Sydney",
+                "required_skills": ["Python"],
+                "experience_years_min": 3
+            }
+
+            Query: "Looking for project managers with PMP certification"
+            Response: {
+                "role": "Project Manager",
+                "related_roles": ["Program Manager", "Project Lead"],
+                "related_keywords": ["Project Management", "PMP"],
+                "location": null,
+                "required_skills": ["Project Management", "PMP"],
+                "experience_years_min": null
+            }
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": "You are a search filter extraction assistant. Extract structured search filters from natural language queries."},
+                    {"role": "user", "content": f"{prompt}\n\nQuery: {query}"}
+                ],
+                response_format={ "type": "json_object" }
+            )
+
+            # Parse the JSON response
+            filters = json.loads(response.choices[0].message.content)
+            return filters
+
+        except Exception as e:
+            raise Exception(f"Error extracting filters with OpenAI: {str(e)}") 

@@ -6,6 +6,15 @@ import json
 from datetime import datetime, UTC
 from backend.openai_client import OpenAIClient
 import pandas as pd
+import logging
+import time
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -123,8 +132,12 @@ def display_skills(skills_by_category):
 def refine_search_candidates(query, current_filters):
     """Refine search based on new query and existing filters"""
     try:
+        logger.info(f"Processing new search query: {query}")
+        logger.info(f"Current filters before update: {json.dumps(current_filters, indent=2) if current_filters else 'None'}")
+        
         # Extract new filters from the query
         new_filters = openai_client.extract_query_filters(query)
+        logger.info(f"LLM extracted filters: {json.dumps(new_filters, indent=2)}")
         
         # Merge with existing filters
         if current_filters:
@@ -140,72 +153,112 @@ def refine_search_candidates(query, current_filters):
         else:
             current_filters = new_filters
         
-        # Build the query
-        query = supabase.table('resumes').select('*')
+        logger.info(f"Final filters after merge: {json.dumps(current_filters, indent=2)}")
         
-        # Apply location filter if present
-        if current_filters['location']:
+        # Build the query
+        query = supabase.table('resumes').select(
+            'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
+        )
+
+        # Apply optional filters
+        if current_filters.get('location'):
             query = query.ilike('location', f'%{current_filters["location"]}%')
         
-        # Apply experience filter if present
-        if current_filters['experience_years_min']:
+        if current_filters.get('experience_years_min'):
             query = query.gte('total_years_experience', current_filters['experience_years_min'])
-        
-        # Apply skills filter if present
-        if current_filters['required_skills']:
-            # Convert skills to lowercase for case-insensitive comparison
-            required_skills = [skill.lower() for skill in current_filters['required_skills']]
-            # Use the && operator to check for array overlap
-            query = query.filter('skills', 'cs', required_skills)
-        
-        # Execute the query
-        response = query.execute()
-        
-        if not response.data:
-            return [], current_filters
-        
+
+        # Initialize results list
+        all_results = []
+
+        # Get role matches
+        if current_filters.get('role'):
+            role_query = supabase.table('resumes').select(
+                'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
+            )
+            
+            # Apply location and experience filters if present
+            if current_filters.get('location'):
+                role_query = role_query.ilike('location', f'%{current_filters["location"]}%')
+            if current_filters.get('experience_years_min'):
+                role_query = role_query.gte('total_years_experience', current_filters['experience_years_min'])
+            
+            # Add main role condition
+            role_query = role_query.ilike('current_or_last_job_title', f'%{current_filters["role"]}%')
+            role_results = role_query.execute()
+            all_results.extend(role_results.data)
+            
+            # Add related roles
+            if current_filters.get('related_roles'):
+                for role in current_filters['related_roles']:
+                    related_query = supabase.table('resumes').select(
+                        'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
+                    )
+                    # Apply location and experience filters if present
+                    if current_filters.get('location'):
+                        related_query = related_query.ilike('location', f'%{current_filters["location"]}%')
+                    if current_filters.get('experience_years_min'):
+                        related_query = related_query.gte('total_years_experience', current_filters['experience_years_min'])
+                    
+                    related_query = related_query.ilike('current_or_last_job_title', f'%{role}%')
+                    related_results = related_query.execute()
+                    all_results.extend(related_results.data)
+
+        # Get skills matches
+        if current_filters.get('required_skills'):
+            for skill in current_filters['required_skills']:
+                skill_query = supabase.table('resumes').select(
+                    'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
+                )
+                
+                # Apply location and experience filters if present
+                if current_filters.get('location'):
+                    skill_query = skill_query.ilike('location', f'%{current_filters["location"]}%')
+                if current_filters.get('experience_years_min'):
+                    skill_query = skill_query.gte('total_years_experience', current_filters['experience_years_min'])
+                
+                skill_query = skill_query.contains('skills', [skill.upper()])
+                skill_results = skill_query.execute()
+                all_results.extend(skill_results.data)
+
+        # Remove duplicates based on id
+        seen_ids = set()
+        unique_results = []
+        for result in all_results:
+            if result['id'] not in seen_ids:
+                seen_ids.add(result['id'])
+                unique_results.append(result)
+
         # Convert to DataFrame for easier manipulation
-        df = pd.DataFrame(response.data)
+        df = pd.DataFrame(unique_results)
+        logger.info(f"Found {len(df)} unique candidates")
         
-        # Calculate match score for each candidate
-        def calculate_match_score(row):
-            score = 0
-            total_criteria = 0
+        # Log detailed matching information
+        for _, candidate in df.iterrows():
+            logger.info(f"\nCandidate: {candidate['full_name']}")
+            logger.info(f"Location: {candidate['location']}")
+            logger.info(f"Job Title: {candidate['current_or_last_job_title']}")
+            logger.info(f"Experience: {candidate['total_years_experience']} years")
+            logger.info(f"Skills: {candidate['skills']}")
             
-            # Location match
-            if current_filters['location']:
-                total_criteria += 1
-                if row['location'] and current_filters['location'].lower() in row['location'].lower():
-                    score += 1
-            
-            # Experience match
-            if current_filters['experience_years_min']:
-                total_criteria += 1
-                if row['total_years_experience'] and row['total_years_experience'] >= current_filters['experience_years_min']:
-                    score += 1
-            
-            # Skills match
-            if current_filters['required_skills']:
-                total_criteria += 1
-                candidate_skills = [s.lower() for s in row['skills']]
-                matching_skills = [s for s in required_skills if s in candidate_skills]
-                if matching_skills:
-                    score += 1
-            
-            return score / total_criteria if total_criteria > 0 else 0
-        
-        # Calculate match scores
-        df['match_score'] = df.apply(calculate_match_score, axis=1)
-        
-        # Sort by match score and get top 10
-        df = df.sort_values('match_score', ascending=False).head(10)
+            # Log which filters matched
+            if current_filters.get('location'):
+                logger.info(f"✓ Matched location: {current_filters['location']}")
+            if current_filters.get('experience_years_min'):
+                logger.info(f"✓ Matched experience: {current_filters['experience_years_min']}+ years")
+            if current_filters.get('role'):
+                logger.info(f"✓ Matched role: {current_filters['role']}")
+            if current_filters.get('required_skills'):
+                matched_skills = [skill for skill in current_filters['required_skills'] 
+                               if skill.upper() in [s.upper() for s in candidate['skills']]]
+                if matched_skills:
+                    logger.info(f"✓ Matched skills: {matched_skills}")
         
         # Convert back to list of dictionaries
         candidates = df.to_dict('records')
         
         return candidates, current_filters
     except Exception as e:
-        st.error(f"Error searching candidates: {str(e)}")
+        logger.error(f"Error searching candidates: {str(e)}", exc_info=True)
         return [], current_filters
 
 def format_candidate_response(candidates):
@@ -217,11 +270,8 @@ def format_candidate_response(candidates):
     df = pd.DataFrame(candidates)
     
     # Select and rename columns for display
-    display_df = df[['full_name', 'skills', 'total_years_experience', 'location', 'current_or_last_job_title', 'match_score']]
-    display_df.columns = ['Name', 'Skills', 'Experience (years)', 'Location', 'Current Job Title', 'Match Score']
-    
-    # Format the match score as percentage
-    display_df['Match Score'] = display_df['Match Score'].apply(lambda x: f"{x*100:.1f}%")
+    display_df = df[['full_name', 'skills', 'total_years_experience', 'location', 'current_or_last_job_title']]
+    display_df.columns = ['Name', 'Skills', 'Experience (years)', 'Location', 'Current Job Title']
     
     # Format skills as comma-separated string
     display_df['Skills'] = display_df['Skills'].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
@@ -234,8 +284,7 @@ def format_candidate_response(candidates):
             "Skills": st.column_config.TextColumn("Skills", width="large"),
             "Experience (years)": st.column_config.NumberColumn("Experience (years)", width="small"),
             "Location": st.column_config.TextColumn("Location", width="medium"),
-            "Current Job Title": st.column_config.TextColumn("Current Job Title", width="large"),
-            "Match Score": st.column_config.TextColumn("Match Score", width="small")
+            "Current Job Title": st.column_config.TextColumn("Current Job Title", width="large")
         },
         hide_index=True
     )
