@@ -279,6 +279,10 @@ def get_recent_candidates(metrics):
         st.error(f"Error getting recent candidates: {str(e)}")
         return pd.DataFrame(columns=['Name', 'Job Title', 'Location', 'Upload Date'])
 
+def clear_cache():
+    """Clear all cached data"""
+    st.cache_data.clear()
+
 def main():
     st.set_page_config(
         page_title="SkillQ - Home",
@@ -297,6 +301,12 @@ def main():
 
     # Get user profile
     profile = get_user_profile()
+    if not profile:
+        st.error("Error loading profile. Please try logging in again.")
+        if st.button("Go to Login"):
+            st.switch_page("login.py")
+        return
+
     display_name = profile.get('full_name', '') if profile else st.session_state.user_email
 
     st.title("🏠 Welcome to SkillQ")
@@ -329,6 +339,8 @@ def main():
     
     # Show loading spinner while fetching data
     with st.spinner('Loading dashboard data...'):
+        # Clear cache when loading dashboard
+        clear_cache()
         metrics = get_candidate_metrics()
         
     if not metrics:
@@ -364,6 +376,7 @@ def main():
     # Add a logout button at the bottom
     st.markdown("---")
     if st.button("Logout"):
+        clear_cache()  # Clear cache on logout
         st.session_state.authenticated = False
         st.session_state.user_email = None
         st.switch_page("login.py")
