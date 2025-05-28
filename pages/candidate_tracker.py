@@ -29,18 +29,26 @@ def initialize_session_state():
         st.session_state.refresh_key = time.time()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_contacted_candidates(recruiter_id, page=1, per_page=5, refresh_key=None):
-    """Get contacted candidates with pagination"""
+def get_contacted_candidates(recruiter_id, page=1, per_page=5, refresh_key=None, filter_date=None):
+    """Get contacted candidates with pagination and optional date filter"""
     try:
         # Calculate offset
         offset = (page - 1) * per_page
         
-        # Get contacted candidates with their details
-        response = supabase.table('recruiter_notes')\
+        # Base query
+        query = supabase.table('recruiter_notes')\
             .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
             .eq('recruiter_id', recruiter_id)\
-            .eq('contact_status', True)\
-            .order('follow_up_date', desc=True)\
+            .eq('contact_status', True)
+        
+        # Add date filter if provided
+        if filter_date:
+            # Convert date to ISO format string
+            date_str = filter_date.isoformat()
+            query = query.eq('follow_up_date', date_str)
+        
+        # Execute query with pagination
+        response = query.order('follow_up_date', desc=True)\
             .range(offset, offset + per_page - 1)\
             .execute()
             
@@ -48,11 +56,16 @@ def get_contacted_candidates(recruiter_id, page=1, per_page=5, refresh_key=None)
             return [], 0
             
         # Get total count for pagination
-        count_response = supabase.table('recruiter_notes')\
+        count_query = supabase.table('recruiter_notes')\
             .select('id', count='exact')\
             .eq('recruiter_id', recruiter_id)\
-            .eq('contact_status', True)\
-            .execute()
+            .eq('contact_status', True)
+            
+        # Add date filter to count query if provided
+        if filter_date:
+            count_query = count_query.eq('follow_up_date', date_str)
+            
+        count_response = count_query.execute()
             
         total_count = count_response.count if count_response.count is not None else 0
         
@@ -109,16 +122,44 @@ def main():
         st.session_state.refresh_key = time.time()
         st.rerun()
 
-    # Get contacted candidates with pagination
+    # Add view options
+    st.subheader("📅 View Options")
+    view_option = st.radio(
+        "Select View",
+        ["All Candidates", "Filter by Follow-up Date"],
+        horizontal=True,
+        help="Choose whether to view all candidates or filter by follow-up date"
+    )
+
+    # Add date filter if selected
+    filter_date = None
+    if view_option == "Filter by Follow-up Date":
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            filter_date = st.date_input(
+                "Select Date",
+                value=None,
+                help="Filter candidates by their follow-up date"
+            )
+        with col2:
+            if st.button("Clear Filter"):
+                filter_date = None
+                st.rerun()
+
+    # Get contacted candidates with pagination and date filter
     candidates, total_count = get_contacted_candidates(
         recruiter_id,
         st.session_state.tracker_page,
         st.session_state.tracker_per_page,
-        st.session_state.refresh_key
+        st.session_state.refresh_key,
+        filter_date
     )
 
     if not candidates:
-        st.info("No contacted candidates found. Start by contacting candidates from your drafts.")
+        if view_option == "Filter by Follow-up Date" and filter_date:
+            st.info(f"No candidates found with follow-up date on {filter_date.strftime('%Y-%m-%d')}")
+        else:
+            st.info("No contacted candidates found. Start by contacting candidates from your drafts.")
         return
 
     # Create a table of candidates
@@ -128,9 +169,11 @@ def main():
     table_data = []
     for candidate in candidates:
         resume = candidate['resumes']
+        # Create a unique anchor ID for each candidate
+        anchor_id = f"candidate-{resume['full_name'].lower().replace(' ', '-')}"
         table_data.append({
             'Candidate Name': resume['full_name'],
-            'View Details': f"[View Details](#{resume['full_name'].lower().replace(' ', '-')})",
+            'View Details': f"[View Details](#{anchor_id})",
             'Current Role': resume['current_or_last_job_title'],
             'Location': resume['location'],
             'Email': resume.get('email', 'N/A'),
@@ -180,6 +223,10 @@ def main():
     st.subheader("📝 Candidate Details")
     for candidate in candidates:
         resume = candidate['resumes']
+        # Create a unique anchor ID for each candidate
+        anchor_id = f"candidate-{resume['full_name'].lower().replace(' ', '-')}"
+        # Add an HTML anchor before the expander
+        st.markdown(f'<div id="{anchor_id}"></div>', unsafe_allow_html=True)
         with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
             # Candidate summary
             st.markdown("#### Candidate Summary")
