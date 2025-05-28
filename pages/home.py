@@ -290,7 +290,13 @@ def main():
         layout="wide"
     )
     
-    initialize_session_state()
+    # Initialize session state
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'user_email' not in st.session_state:
+        st.session_state.user_email = None
+    if 'dashboard_loaded' not in st.session_state:
+        st.session_state.dashboard_loaded = False
     
     # Check if user is authenticated
     if not st.session_state.authenticated:
@@ -337,10 +343,14 @@ def main():
     st.markdown("---")
     st.subheader("📊 Quick Look at Your Candidate Portfolio")
     
+    # Force reload dashboard data if not loaded or if returning from another page
+    if not st.session_state.dashboard_loaded:
+        clear_cache()
+        st.session_state.dashboard_loaded = True
+        st.rerun()
+    
     # Show loading spinner while fetching data
     with st.spinner('Loading dashboard data...'):
-        # Clear cache when loading dashboard
-        clear_cache()
         metrics = get_candidate_metrics()
         
     if not metrics:
@@ -379,6 +389,7 @@ def main():
         clear_cache()  # Clear cache on logout
         st.session_state.authenticated = False
         st.session_state.user_email = None
+        st.session_state.dashboard_loaded = False
         st.switch_page("login.py")
 
 if __name__ == "__main__":
