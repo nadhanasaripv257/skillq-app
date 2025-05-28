@@ -170,14 +170,16 @@ def main():
     table_data = []
     for draft in drafts:
         resume = draft['resumes']
+        # Create a unique anchor ID for each draft
+        anchor_id = resume['full_name'].lower().replace(' ', '-')
         try:
-            follow_up_date = pd.to_datetime(draft.get('follow_up_date')) if draft.get('follow_up_date') else None
+            follow_up_date = pd.to_datetime(draft.get('follow_up_date')).date() if draft.get('follow_up_date') else None
         except (ValueError, TypeError):
             follow_up_date = None
             
         table_data.append({
-            'id': draft['id'],
-            'Candidate Name': resume["full_name"],
+            'Candidate Name': resume['full_name'],
+            'View Details': f"[View Details](#{anchor_id})",
             'Current Role': resume['current_or_last_job_title'],
             'Location': resume['location'],
             'Email': resume.get('email', 'N/A'),
@@ -186,7 +188,7 @@ def main():
             'Contacted': draft.get('contact_status', False),
             'Follow-up Required': draft.get('follow_up_required', False),
             'Follow-up Date': follow_up_date,
-            'Created': format_timestamp(draft['created_at'])
+            'Last Updated': format_timestamp(draft.get('updated_at', draft['created_at']))
         })
     
     # Create DataFrame
@@ -201,15 +203,14 @@ def main():
         use_container_width=True,
         hide_index=True,
         column_config={
-            "id": st.column_config.NumberColumn(
-                "ID",
-                help="Internal ID",
-                disabled=True,
-                required=True
-            ),
             "Candidate Name": st.column_config.TextColumn(
                 "Candidate Name",
                 help="Candidate's full name",
+                disabled=True
+            ),
+            "View Details": st.column_config.TextColumn(
+                "View Details",
+                help="Click to view draft details",
                 disabled=True
             ),
             "Contacted": st.column_config.CheckboxColumn(
@@ -231,44 +232,49 @@ def main():
                 step=1
             )
         },
-        disabled=["id", "Candidate Name", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Created"]
+        disabled=["Candidate Name", "View Details", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Updated"]
     )
 
-    # Save contact status changes
-    if st.button("💾 Save Contact Status Changes"):
+    # Save changes to follow-up status
+    if st.button("💾 Save Changes"):
         try:
             # Get the current state of the dataframe
             updated_df = edited_df
             
-            # Update each draft's contact status
-            for _, row in updated_df.iterrows():
+            # Update each draft's status
+            for i, row in updated_df.iterrows():
                 try:
-                    follow_up_date = row['Follow-up Date'].strftime('%Y-%m-%d') if pd.notna(row['Follow-up Date']) else None
-                except (AttributeError, ValueError):
+                    # Convert the date to ISO format with timezone
+                    if pd.notna(row['Follow-up Date']):
+                        follow_up_date = row['Follow-up Date'].strftime('%Y-%m-%dT00:00:00Z')
+                    else:
+                        follow_up_date = None
+                except (AttributeError, ValueError) as e:
+                    st.error(f"Error processing date: {str(e)}")
                     follow_up_date = None
                     
                 data = {
-                    'contact_status': row['Contacted'],
-                    'follow_up_required': row['Follow-up Required'],
+                    'contact_status': bool(row['Contacted']),
+                    'follow_up_required': bool(row['Follow-up Required']),
                     'follow_up_date': follow_up_date,
                     'updated_at': datetime.now(UTC).isoformat()
                 }
                 
                 response = supabase.table('recruiter_notes')\
                     .update(data)\
-                    .eq('id', row['id'])\
+                    .eq('id', drafts[i]['id'])\
                     .execute()
                 
                 if hasattr(response, 'error') and response.error:
-                    st.error(f"Error updating contact status: {response.error}")
+                    st.error(f"Error updating status: {response.error}")
                     return
             
-            st.success("Contact status changes saved successfully!")
+            st.success("Changes saved successfully!")
             st.session_state.refresh_key = time.time()
             st.rerun()
             
         except Exception as e:
-            st.error(f"Error updating contact status: {str(e)}")
+            st.error(f"Error updating status: {str(e)}")
             st.error("Please try again or contact support if the issue persists.")
 
     # Display detailed view for each draft
@@ -338,6 +344,8 @@ def main():
                             'contact_status': True,
                             'outreach_message': outreach_message,
                             'screening_questions': screening_questions,
+                            'follow_up_required': draft.get('follow_up_required', False),
+                            'follow_up_date': draft.get('follow_up_date'),
                             'updated_at': datetime.now(UTC).isoformat()
                         }
                         
@@ -355,6 +363,38 @@ def main():
                             
                     except Exception as e:
                         st.error(f"Error marking as contacted: {str(e)}")
+            
+            # Update follow-up status
+            with st.form(key=f"update_followup_{draft['id']}"):
+                st.markdown("#### Update Follow-up Status")
+                new_follow_up_required = st.checkbox("Follow-up Required", value=draft.get('follow_up_required', False))
+                new_follow_up_date = st.date_input(
+                    "Follow-up Date",
+                    value=pd.to_datetime(draft.get('follow_up_date')).date() if draft.get('follow_up_date') else None
+                )
+                
+                if st.form_submit_button("Update Follow-up Status"):
+                    try:
+                        data = {
+                            'follow_up_required': new_follow_up_required,
+                            'follow_up_date': new_follow_up_date.strftime('%Y-%m-%dT00:00:00Z') if new_follow_up_date else None,
+                            'updated_at': datetime.now(UTC).isoformat()
+                        }
+                        
+                        response = supabase.table('recruiter_notes')\
+                            .update(data)\
+                            .eq('id', draft['id'])\
+                            .execute()
+                        
+                        if hasattr(response, 'error') and response.error:
+                            st.error(f"Error updating follow-up status: {response.error}")
+                        else:
+                            st.success("Follow-up status updated successfully!")
+                            st.session_state.refresh_key = time.time()
+                            st.rerun()
+                            
+                    except Exception as e:
+                        st.error(f"Error updating follow-up status: {str(e)}")
             
             # Timestamps
             st.markdown(f"*Created: {format_timestamp(draft['created_at'])}*")

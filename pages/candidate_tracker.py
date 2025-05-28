@@ -29,12 +29,9 @@ def initialize_session_state():
         st.session_state.refresh_key = time.time()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_contacted_candidates(recruiter_id, page=1, per_page=5, refresh_key=None, filter_date=None):
-    """Get contacted candidates with pagination and optional date filter"""
+def get_contacted_candidates(recruiter_id, refresh_key=None, filter_date=None):
+    """Get all contacted candidates with optional date filter"""
     try:
-        # Calculate offset
-        offset = (page - 1) * per_page
-        
         # Base query
         query = supabase.table('recruiter_notes')\
             .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
@@ -47,32 +44,17 @@ def get_contacted_candidates(recruiter_id, page=1, per_page=5, refresh_key=None,
             date_str = filter_date.isoformat()
             query = query.eq('follow_up_date', date_str)
         
-        # Execute query with pagination
+        # Execute query
         response = query.order('follow_up_date', desc=True)\
-            .range(offset, offset + per_page - 1)\
             .execute()
             
         if not response.data:
-            return [], 0
+            return []
             
-        # Get total count for pagination
-        count_query = supabase.table('recruiter_notes')\
-            .select('id', count='exact')\
-            .eq('recruiter_id', recruiter_id)\
-            .eq('contact_status', True)
-            
-        # Add date filter to count query if provided
-        if filter_date:
-            count_query = count_query.eq('follow_up_date', date_str)
-            
-        count_response = count_query.execute()
-            
-        total_count = count_response.count if count_response.count is not None else 0
-        
-        return response.data, total_count
+        return response.data
     except Exception as e:
         st.error(f"Error fetching candidates: {str(e)}")
-        return [], 0
+        return []
 
 def format_timestamp(timestamp):
     """Format timestamp to readable string"""
@@ -146,11 +128,9 @@ def main():
                 filter_date = None
                 st.rerun()
 
-    # Get contacted candidates with pagination and date filter
-    candidates, total_count = get_contacted_candidates(
+    # Get contacted candidates with date filter
+    candidates = get_contacted_candidates(
         recruiter_id,
-        st.session_state.tracker_page,
-        st.session_state.tracker_per_page,
         st.session_state.refresh_key,
         filter_date
     )
@@ -170,7 +150,18 @@ def main():
     for candidate in candidates:
         resume = candidate['resumes']
         # Create a unique anchor ID for each candidate
-        anchor_id = f"candidate-{resume['full_name'].lower().replace(' ', '-')}"
+        anchor_id = resume['full_name'].lower().replace(' ', '-')
+        
+        # Handle follow-up date
+        follow_up_date = None
+        if candidate.get('follow_up_date'):
+            try:
+                # Parse the ISO format date from Supabase
+                follow_up_date = pd.to_datetime(candidate['follow_up_date']).date()
+            except (ValueError, TypeError) as e:
+                st.error(f"Error parsing follow-up date for {resume['full_name']}: {str(e)}")
+                follow_up_date = None
+            
         table_data.append({
             'Candidate Name': resume['full_name'],
             'View Details': f"[View Details](#{anchor_id})",
@@ -180,7 +171,7 @@ def main():
             'Phone': resume.get('phone', 'N/A'),
             'LinkedIn': resume.get('linkedin_url', 'N/A'),
             'Follow-up Required': candidate.get('follow_up_required', False),
-            'Follow-up Date': pd.to_datetime(candidate.get('follow_up_date')) if candidate.get('follow_up_date') else None,
+            'Follow-up Date': follow_up_date,
             'Last Contact': format_timestamp(candidate.get('updated_at', candidate['created_at']))
         })
     
@@ -219,14 +210,56 @@ def main():
         disabled=["Candidate Name", "View Details", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Contact"]
     )
 
+    # Save changes to follow-up status
+    if st.button("💾 Save Follow-up Changes"):
+        try:
+            # Get the current state of the dataframe
+            updated_df = edited_df
+            
+            # Update each candidate's follow-up status
+            for i, row in updated_df.iterrows():
+                try:
+                    # Convert the date to ISO format with timezone
+                    if pd.notna(row['Follow-up Date']):
+                        follow_up_date = row['Follow-up Date'].strftime('%Y-%m-%dT00:00:00Z')
+                    else:
+                        follow_up_date = None
+                except (AttributeError, ValueError) as e:
+                    st.error(f"Error processing date: {str(e)}")
+                    follow_up_date = None
+                    
+                data = {
+                    'follow_up_required': bool(row['Follow-up Required']),
+                    'follow_up_date': follow_up_date,
+                    'updated_at': datetime.now(UTC).isoformat()
+                }
+                
+                # Debug: Show the data being sent to Supabase
+                st.write(f"Updating candidate {i+1} with data:", data)
+                
+                response = supabase.table('recruiter_notes')\
+                    .update(data)\
+                    .eq('id', candidates[i]['id'])\
+                    .execute()
+                
+                if hasattr(response, 'error') and response.error:
+                    st.error(f"Error updating follow-up status: {response.error}")
+                    return
+                else:
+                    st.write(f"Successfully updated candidate {i+1}")
+            
+            st.success("Follow-up status changes saved successfully!")
+            st.session_state.refresh_key = time.time()
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Error updating follow-up status: {str(e)}")
+            st.error("Please try again or contact support if the issue persists.")
+
     # Display detailed view for each candidate
     st.subheader("📝 Candidate Details")
     for candidate in candidates:
         resume = candidate['resumes']
-        # Create a unique anchor ID for each candidate
-        anchor_id = f"candidate-{resume['full_name'].lower().replace(' ', '-')}"
-        # Add an HTML anchor before the expander
-        st.markdown(f'<div id="{anchor_id}"></div>', unsafe_allow_html=True)
         with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
             # Candidate summary
             st.markdown("#### Candidate Summary")
@@ -273,7 +306,7 @@ def main():
                     try:
                         data = {
                             'follow_up_required': new_follow_up_required,
-                            'follow_up_date': new_follow_up_date.isoformat() if new_follow_up_date else None,
+                            'follow_up_date': new_follow_up_date.strftime('%Y-%m-%dT00:00:00Z') if new_follow_up_date else None,
                             'updated_at': datetime.now(UTC).isoformat()
                         }
                         
@@ -296,28 +329,6 @@ def main():
             st.markdown(f"*First Contact: {format_timestamp(candidate['created_at'])}*")
             if candidate.get('updated_at'):
                 st.markdown(f"*Last Updated: {format_timestamp(candidate['updated_at'])}*")
-
-    # Pagination
-    total_pages = (total_count + st.session_state.tracker_per_page - 1) // st.session_state.tracker_per_page
-    
-    if total_pages > 1:
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        with col1:
-            if st.session_state.tracker_page > 1:
-                if st.button("← Previous"):
-                    st.session_state.tracker_page -= 1
-                    st.rerun()
-        
-        with col2:
-            st.markdown(f"**Page {st.session_state.tracker_page} of {total_pages}**")
-        
-        with col3:
-            if st.session_state.tracker_page < total_pages:
-                if st.button("Next →"):
-                    st.session_state.tracker_page += 1
-                    st.rerun()
 
 if __name__ == "__main__":
     main() 
