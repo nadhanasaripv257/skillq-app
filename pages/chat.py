@@ -299,6 +299,94 @@ def format_candidate_response(candidates):
                 for reason in ranked['reasoning']:
                     st.markdown(f"• {reason}")
             
+            # Add Generate Outreach button
+            outreach_key = f"outreach_{candidate['id']}"
+            if outreach_key not in st.session_state:
+                st.session_state[outreach_key] = None
+            
+            if st.button("✉️ Generate Outreach & Questions", key=f"generate_outreach_{candidate['id']}"):
+                with st.spinner("Generating personalized outreach..."):
+                    # Get user ID from session
+                    user_response = supabase.auth.get_user()
+                    if not user_response.user:
+                        st.error("Please log in to generate outreach messages")
+                        continue
+                    
+                    recruiter_id = user_response.user.id
+                    
+                    # Check if we have cached outreach data
+                    cache_key = f"outreach_cache_{candidate['id']}_{st.session_state.last_query}"
+                    if cache_key in st.session_state:
+                        outreach_data = st.session_state[cache_key]
+                    else:
+                        # Generate new outreach data
+                        outreach_data = openai_client.generate_outreach(
+                            candidate=candidate,
+                            original_query=st.session_state.last_query
+                        )
+                        # Cache the result
+                        st.session_state[cache_key] = outreach_data
+                    
+                    # Store in session state for persistence
+                    st.session_state[outreach_key] = outreach_data
+                    
+                    # Force a rerun to update the UI
+                    st.rerun()
+            
+            # Display outreach form if we have data
+            if st.session_state[outreach_key]:
+                outreach_data = st.session_state[outreach_key]
+                
+                # Create a container for the outreach form
+                outreach_container = st.container()
+                with outreach_container:
+                    st.markdown("### 📝 Outreach Message")
+                    outreach_message = st.text_area(
+                        "Edit the message if needed:",
+                        value=outreach_data['outreach_message'],
+                        height=150,
+                        key=f"outreach_text_{candidate['id']}"
+                    )
+                    
+                    st.markdown("### ❓ Screening Questions")
+                    questions = []
+                    for i, question in enumerate(outreach_data['screening_questions'], 1):
+                        edited_question = st.text_input(
+                            f"Question {i}:",
+                            value=question,
+                            key=f"question_{candidate['id']}_{i}"
+                        )
+                        questions.append(edited_question)
+                    
+                    # Add save button
+                    if st.button("💾 Save Draft", key=f"save_draft_{candidate['id']}"):
+                        try:
+                            # Get user ID from session
+                            user_response = supabase.auth.get_user()
+                            if not user_response.user:
+                                st.error("Please log in to save drafts")
+                                return
+                            
+                            recruiter_id = user_response.user.id
+                            
+                            # Save to Supabase
+                            data = {
+                                'recruiter_id': recruiter_id,
+                                'candidate_id': candidate['id'],
+                                'outreach_message': outreach_message,
+                                'screening_questions': questions
+                            }
+                            
+                            response = supabase.table('recruiter_notes').insert(data).execute()
+                            
+                            if hasattr(response, 'error') and response.error:
+                                st.error(f"Error saving draft: {response.error}")
+                            else:
+                                st.success("Draft saved successfully!")
+                                
+                        except Exception as e:
+                            st.error(f"Error saving draft: {str(e)}")
+            
             # Add a button to view full profile
             if st.button("View Full Profile", key=f"view_profile_{candidate['id']}"):
                 display_candidate_profile(candidate)

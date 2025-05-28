@@ -53,31 +53,9 @@ def get_user_profile(refresh_key=None):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_candidate_metrics(refresh_key=None):
-    """Get summary metrics from the dashboard_metrics materialized view or fallback to direct query"""
+    """Get summary metrics using direct query"""
     try:
-        # Try to get data from the materialized view first
-        try:
-            response = supabase.table('dashboard_metrics').select('*').execute()
-            if response.data:
-                metrics = response.data[0]
-                return {
-                    'total_candidates': metrics['total_candidates'],
-                    'top_job_titles': sorted(
-                        [(title, count) for title, count in (metrics['job_title_counts'] or {}).items()],
-                        key=lambda x: x[1],
-                        reverse=True
-                    )[:3],
-                    'most_common_skill': max((metrics['skill_counts'] or {}).items(), key=lambda x: x[1])[0] if metrics['skill_counts'] else "No skills found",
-                    'top_location': max((metrics['location_counts'] or {}).items(), key=lambda x: x[1])[0] if metrics['location_counts'] else "No location found",
-                    'candidates': metrics['recent_candidates'] or [],
-                    'job_title_counts': metrics['job_title_counts'] or {},
-                    'location_counts': metrics['location_counts'] or {},
-                    'skill_counts': metrics['skill_counts'] or {}
-                }
-        except Exception as view_error:
-            st.warning(f"Dashboard view not available: {str(view_error)}. Using direct query...")
-            
-        # Fallback to direct query if view is not available
+        # Direct query approach
         response = supabase.table('resumes').select('*').execute()
         candidates = response.data
         
@@ -349,6 +327,16 @@ def main():
         if st.button("Edit Profile"):
             st.session_state.page = "Profile"
             st.switch_page("pages/profile.py")
+
+    # Add My Drafts section
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.subheader("📁 My Drafts")
+        st.write("View and manage your saved outreach messages")
+        if st.button("View My Drafts"):
+            st.session_state.page = "Drafts"
+            st.switch_page("pages/drafts.py")
 
     # Dashboard Section - Always show when on home page
     st.markdown("---")

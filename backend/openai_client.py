@@ -228,4 +228,64 @@ Reasoning:
             
         except Exception as e:
             logger.error(f"Error ranking candidates: {str(e)}")
-            return [] 
+            return []
+
+    def generate_outreach(self, candidate, original_query):
+        """Generate personalized outreach message and 3 HR screening questions"""
+        try:
+            # Prepare the prompt
+            prompt = f"""As an HR professional, generate a personalized outreach message and 3 highly targeted HR screening questions for this candidate:
+
+Candidate Details:
+- Name: {candidate['full_name']}
+- Current Role: {candidate['current_or_last_job_title']}
+- Years of Experience: {candidate['total_years_experience']}
+- Location: {candidate['location']}
+- Skills: {', '.join(candidate['skills'])}
+
+Original Query: {original_query}
+
+Please provide:
+1. A personalized outreach message that:
+   - References their specific experience and skills
+   - Mentions the role they're being considered for
+   - Is professional but conversational
+   - Includes a clear call to action
+
+2. Three highly personalized HR screening questions that:
+   - Are specifically tailored to their background and experience
+   - Focus on their career progression and motivations
+   - Address potential concerns or gaps in their profile
+   - Help assess their fit for the specific role mentioned in the query
+   - Avoid generic questions that could apply to any candidate
+
+Format the response as JSON with two fields:
+{{
+    "outreach_message": "the personalized message",
+    "screening_questions": ["question1", "question2", "question3"]
+}}"""
+
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": "You are an experienced HR professional who specializes in candidate outreach and screening. Focus on generating highly personalized questions that are specific to the candidate's background and the role they're being considered for."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse the response
+            result = json.loads(response.choices[0].message.content)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error generating outreach: {str(e)}")
+            return {
+                "outreach_message": "Error generating personalized message. Please try again.",
+                "screening_questions": [
+                    "Given your experience in [role], what aspects of this opportunity interest you most?",
+                    "How has your background in [skills] prepared you for this role?",
+                    "What are your expectations regarding career growth in this position?"
+                ]
+            } 

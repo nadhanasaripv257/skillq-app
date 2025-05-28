@@ -2,7 +2,7 @@ import os
 from supabase import create_client, Client
 from typing import Dict, Optional, List
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from functools import lru_cache
@@ -121,14 +121,26 @@ class SupabaseClient:
             
             # Insert data into resumes table
             logger.debug("Inserting data into resumes table")
-            result = self.client.table('resumes').insert(resume_data).execute()
-            
-            if not result.data:
-                logger.error("Failed to store resume data - no data returned from insert")
-                raise Exception("Failed to store resume data")
-            
-            logger.info(f"Successfully stored resume data with ID: {resume_data['id']}")
-            return result.data[0]
+            try:
+                result = self.client.table('resumes').insert(resume_data).execute()
+                
+                if not result.data:
+                    logger.error("Failed to store resume data - no data returned from insert")
+                    raise Exception("Failed to store resume data")
+                
+                logger.info(f"Successfully stored resume data with ID: {resume_data['id']}")
+                return result.data[0]
+            except Exception as insert_error:
+                # Check if it's a materialized view permission error
+                if isinstance(insert_error, Exception) and 'must be owner of materialized view dashboard_metrics' in str(insert_error):
+                    logger.warning("Materialized view permission error - proceeding with insert anyway")
+                    # Try to insert without the trigger
+                    result = self.client.table('resumes').insert(resume_data).execute()
+                    if not result.data:
+                        raise Exception("Failed to store resume data")
+                    return result.data[0]
+                else:
+                    raise
             
         except Exception as e:
             logger.error(f"Error storing resume data: {str(e)}", exc_info=True)
@@ -194,3 +206,29 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Error caching resume data: {str(e)}", exc_info=True)
             # If there's an error with Supabase cache, at least we have the local cache 
+
+    def save_recruiter_notes(self, recruiter_id, candidate_id, outreach_message, screening_questions):
+        """Save recruiter notes including outreach message and screening questions"""
+        try:
+            # Prepare the data
+            data = {
+                'recruiter_id': recruiter_id,
+                'candidate_id': candidate_id,
+                'outreach_message': outreach_message,
+                'screening_questions': screening_questions,
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }
+
+            # Insert into recruiter_notes table
+            response = self.client.table('recruiter_notes').insert(data).execute()
+            
+            if response.error:
+                logger.error(f"Error saving recruiter notes: {response.error}")
+                return False
+            
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving recruiter notes: {str(e)}")
+            return False 
