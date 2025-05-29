@@ -28,6 +28,15 @@ class SupabaseClient:
             raise
         self._local_cache = {}
 
+    def table(self, table_name: str):
+        """Expose the table method from the underlying Supabase client"""
+        return self.client.table(table_name)
+
+    @property
+    def auth(self):
+        """Expose the auth object from the underlying Supabase client"""
+        return self.client.auth
+
     @lru_cache(maxsize=1000)
     def store_resume_file(self, file_content: bytes, file_name: str) -> str:
         """Store resume file in Supabase storage with caching"""

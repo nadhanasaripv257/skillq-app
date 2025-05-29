@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import json
 from datetime import datetime, UTC
 from backend.openai_client import OpenAIClient
+from backend.supabase_client import SupabaseClient
 import pandas as pd
 import logging
 import time
@@ -20,10 +21,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Initialize Supabase client
-supabase: Client = create_client(
-    supabase_url=st.secrets["SUPABASE_URL"],
-    supabase_key=st.secrets["SUPABASE_KEY"]
-)
+supabase_client = SupabaseClient()
 
 # Initialize OpenAI client
 openai_client = OpenAIClient()
@@ -50,7 +48,7 @@ def initialize_session_state():
 def get_candidate_skills():
     """Get all candidate skills from resumes and organize them by category"""
     try:
-        response = supabase.table('resumes').select('skills, skill_categories').execute()
+        response = supabase_client.table('resumes').select('skills, skill_categories').execute()
         all_skills = set()
         skill_categories = {}
         
@@ -160,7 +158,7 @@ def refine_search_candidates(query, current_filters):
         logger.info(f"Final filters after merge: {json.dumps(current_filters, indent=2)}")
         
         # Build the query
-        query = supabase.table('resumes').select(
+        query = supabase_client.table('resumes').select(
             'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
         )
 
@@ -176,7 +174,7 @@ def refine_search_candidates(query, current_filters):
 
         # Get role matches
         if current_filters.get('role'):
-            role_query = supabase.table('resumes').select(
+            role_query = supabase_client.table('resumes').select(
                 'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
             )
             
@@ -194,7 +192,7 @@ def refine_search_candidates(query, current_filters):
             # Add related roles
             if current_filters.get('related_roles'):
                 for role in current_filters['related_roles']:
-                    related_query = supabase.table('resumes').select(
+                    related_query = supabase_client.table('resumes').select(
                         'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
                     )
                     # Apply location and experience filters if present
@@ -210,7 +208,7 @@ def refine_search_candidates(query, current_filters):
         # Get skills matches
         if current_filters.get('required_skills'):
             for skill in current_filters['required_skills']:
-                skill_query = supabase.table('resumes').select(
+                skill_query = supabase_client.table('resumes').select(
                     'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
                 )
                 
@@ -338,7 +336,7 @@ def format_candidate_response(candidates):
                 
                 with st.spinner("Generating personalized outreach..."):
                     # Get user ID from session
-                    user_response = supabase.auth.get_user()
+                    user_response = supabase_client.auth.get_user()
                     if not user_response.user:
                         st.error("Please log in to generate outreach messages")
                         continue
@@ -346,7 +344,7 @@ def format_candidate_response(candidates):
                     recruiter_id = user_response.user.id
                     
                     # Check Supabase cache first
-                    cached_data = supabase.get_cached_outreach(
+                    cached_data = supabase_client.get_cached_outreach(
                         candidate['id'],
                         st.session_state.last_query
                     )
@@ -360,7 +358,7 @@ def format_candidate_response(candidates):
                             original_query=st.session_state.last_query
                         )
                         # Cache the result
-                        supabase.cache_outreach_message(
+                        supabase_client.cache_outreach_message(
                             candidate['id'],
                             st.session_state.last_query,
                             outreach_data
@@ -402,7 +400,7 @@ def format_candidate_response(candidates):
                     if st.button("💾 Save Draft", key=f"save_draft_{candidate['id']}"):
                         try:
                             # Get user ID from session
-                            user_response = supabase.auth.get_user()
+                            user_response = supabase_client.auth.get_user()
                             if not user_response.user:
                                 st.error("Please log in to save drafts")
                                 return
@@ -417,7 +415,7 @@ def format_candidate_response(candidates):
                                 'screening_questions': questions
                             }
                             
-                            response = supabase.table('recruiter_notes').insert(data).execute()
+                            response = supabase_client.table('recruiter_notes').insert(data).execute()
                             
                             if hasattr(response, 'error') and response.error:
                                 st.error(f"Error saving draft: {response.error}")
@@ -518,7 +516,7 @@ def save_chat_message(question, answer):
             'timestamp': datetime.now(UTC).isoformat()
         }
         
-        response = supabase.table('chat_history').insert(data).execute()
+        response = supabase_client.table('chat_history').insert(data).execute()
         
         if hasattr(response, 'error') and response.error:
             st.error(f"Error saving chat message: {response.error}")
@@ -536,7 +534,7 @@ def load_chat_history():
         if not st.session_state.user_email:
             return []
             
-        response = supabase.table('chat_history')\
+        response = supabase_client.table('chat_history')\
             .select('*')\
             .eq('user_email', st.session_state.user_email)\
             .order('timestamp', desc=True)\
