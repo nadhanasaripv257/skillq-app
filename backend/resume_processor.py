@@ -54,15 +54,15 @@ class ResumeProcessor:
         6-8: High risk
         9-10: Very high risk
         
-        Risk Factors:
+        Risk Factors and Points:
         - Overlapping roles (2 points)
-        - Unrealistic skill claims (1 point per claim)
+        - Unrealistic skill claims (1 point)
         - Multiple short job stints (2 points)
         - Inconsistent title progression (1 point)
         - Not enough details in resume (1 point)
-        - Missing key information (1 point per missing item)
-        - Employment gaps (1 point per significant gap)
+        - Missing key information (1 point)
         - Education-job mismatch (1 point)
+        - Rapid career progression (1 point)
         
         Returns:
             Tuple[int, List[str]]: (risk_score, list_of_issues)
@@ -76,48 +76,7 @@ class ResumeProcessor:
             personal_info = parsed_data.get('personal_info', {})
             education = parsed_data.get('education_and_certifications', {})
             
-            # Check for overlapping roles
-            job_titles = work_experience.get('previous_job_titles', [])
-            if len(set(job_titles)) < len(job_titles):
-                risk_score += 2
-                issues.append("Overlapping roles detected in work history")
-            
-            # Check for unrealistic skill claims
-            skills = skills_and_tools.get('skills', [])
-            tools = skills_and_tools.get('tools_technologies', [])
-            years_experience = work_experience.get('total_years_experience', 0)
-            
-            # Calculate skill density (skills per year of experience)
-            if years_experience > 0:
-                skill_density = len(skills) / years_experience
-                if skill_density > 3:  # More than 3 skills per year of experience
-                    risk_score += 1
-                    issues.append(f"High skill density ({skill_density:.1f} skills/year) for experience level")
-            
-            # Check for multiple short job stints
-            companies = work_experience.get('companies_worked_at', [])
-            if len(companies) > 3 and years_experience < 5:
-                risk_score += 2
-                issues.append("Multiple short job stints detected")
-            
-            # Check for inconsistent title progression
-            if len(job_titles) > 1:
-                # Check for title demotion
-                if any('senior' in title.lower() for title in job_titles[:-1]) and 'senior' not in job_titles[-1].lower():
-                    risk_score += 1
-                    issues.append("Inconsistent title progression detected")
-                
-                # Check for rapid promotions
-                if len(job_titles) > 2 and years_experience < 3:
-                    risk_score += 1
-                    issues.append("Rapid career progression detected")
-            
-            # Check for insufficient details
-            if not work_experience.get('summary_statement') or len(work_experience.get('summary_statement', '')) < 100:
-                risk_score += 1
-                issues.append("Insufficient details in resume")
-            
-            # Check for missing key information
+            # Check for missing key information (1 point)
             missing_info = []
             if not personal_info.get('email'):
                 missing_info.append("email")
@@ -132,32 +91,65 @@ class ResumeProcessor:
                 risk_score += 1
                 issues.append(f"Missing key information: {', '.join(missing_info)}")
             
-            # Check for education-job mismatch
+            # Check for overlapping roles (2 points)
+            job_titles = work_experience.get('previous_job_titles', [])
+            if len(set(job_titles)) < len(job_titles):
+                risk_score += 2
+                issues.append("Overlapping roles detected in work history")
+            
+            # Check for unrealistic skill claims (1 point)
+            skills = skills_and_tools.get('skills', [])
+            years_experience = work_experience.get('total_years_experience', 0)
+            
+            if years_experience > 0:
+                skill_density = len(skills) / years_experience
+                if skill_density > 3:  # More than 3 skills per year of experience
+                    risk_score += 1
+                    issues.append(f"High skill density ({skill_density:.1f} skills/year) for experience level")
+            
+            # Check for multiple short job stints (2 points)
+            companies = work_experience.get('companies_worked_at', [])
+            if len(companies) > 3 and years_experience < 5:
+                risk_score += 2
+                issues.append("Multiple short job stints detected")
+            
+            # Check for inconsistent title progression (1 point)
+            if len(job_titles) > 1:
+                if any('senior' in title.lower() for title in job_titles[:-1]) and 'senior' not in job_titles[-1].lower():
+                    risk_score += 1
+                    issues.append("Inconsistent title progression detected")
+            
+            # Check for insufficient details (1 point)
+            if not work_experience.get('summary_statement') or len(work_experience.get('summary_statement', '')) < 100:
+                risk_score += 1
+                issues.append("Insufficient details in resume")
+            
+            # Check for education-job mismatch (1 point)
             degree_level = education.get('degree_level', [])
             if degree_level and work_experience.get('current_or_last_job_title'):
                 current_title = work_experience['current_or_last_job_title'].lower()
-                # Check if someone with a high degree is in an entry-level position
                 if any('phd' in level.lower() or 'doctorate' in level.lower() for level in degree_level) and \
                    any(word in current_title for word in ['junior', 'entry', 'associate', 'trainee']):
                     risk_score += 1
                     issues.append("Education level appears mismatched with current role")
             
-            # Normalize score to 0-10 range
-            # The maximum possible raw score is 10 (2 + 1 + 2 + 1 + 1 + 1 + 1 + 1)
-            normalized_score = min(10, risk_score)
+            # Check for rapid career progression (1 point)
+            if len(job_titles) > 2 and years_experience < 3:
+                risk_score += 1
+                issues.append("Rapid career progression detected")
             
             # Add risk level to issues
             risk_level = "Low"
-            if normalized_score >= 9:
+            if risk_score >= 9:
                 risk_level = "Very High"
-            elif normalized_score >= 6:
+            elif risk_score >= 6:
                 risk_level = "High"
-            elif normalized_score >= 3:
+            elif risk_score >= 3:
                 risk_level = "Medium"
             
-            issues.insert(0, f"Risk Level: {risk_level} ({normalized_score}/10)")
+            issues.insert(0, f"Risk Level: {risk_level} ({risk_score}/10)")
             
-            return normalized_score, issues
+            return risk_score, issues
             
         except Exception as e:
             logger.error(f"Error calculating risk score: {str(e)}", exc_info=True)
