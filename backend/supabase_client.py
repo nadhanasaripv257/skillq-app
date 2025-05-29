@@ -20,6 +20,8 @@ class SupabaseClient:
                 supabase_url=os.getenv("SUPABASE_URL"),
                 supabase_key=os.getenv("SUPABASE_KEY")
             )
+            # Extract project reference from Supabase URL
+            self.project_ref = os.getenv("SUPABASE_URL").split("//")[1].split(".")[0]
             logger.info("Successfully initialized Supabase client")
         except Exception as e:
             logger.error(f"Failed to initialize Supabase client: {str(e)}", exc_info=True)
@@ -67,7 +69,10 @@ class SupabaseClient:
         """Store resume data in Supabase"""
         try:
             logger.info("Storing resume data in Supabase")
+            logger.debug(f"Input data: {json.dumps(data, indent=2)}")
+            
             parsed_data = data.get('parsed_data', {})
+            logger.debug(f"Parsed data: {json.dumps(parsed_data, indent=2)}")
             
             # Extract data from parsed_data
             personal_info = parsed_data.get('personal_info', {})
@@ -83,7 +88,7 @@ class SupabaseClient:
                 'file_type': 'pdf',
                 'file_path': data.get('file_url'),
                 
-                # Personal Information
+                # Personal Information - store directly in respective columns
                 'full_name': personal_info.get('full_name'),
                 'email': personal_info.get('email'),
                 'phone': personal_info.get('phone'),
@@ -112,11 +117,18 @@ class SupabaseClient:
                 'summary_statement': additional_info.get('summary_statement'),
                 'languages_spoken': additional_info.get('languages_spoken', []),
                 
-                # Raw and Processed Data
+                # Risk Assessment
+                'risk_score': data.get('risk_score', 0),
+                'issues': data.get('issues', []),
+                
+                # Raw and Processed Data - store only parsed_data, remove pii field
                 'parsed_data': parsed_data,
                 
                 # Metadata
-                'uploaded_by': 'system'
+                'uploaded_by': 'system',
+                'uploaded_at': datetime.now(timezone.utc).isoformat(),
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.now(timezone.utc).isoformat()
             }
             
             logger.debug(f"Prepared resume data for storage: {json.dumps(resume_data, indent=2)}")
@@ -131,6 +143,7 @@ class SupabaseClient:
                     raise Exception("Failed to store resume data")
                 
                 logger.info(f"Successfully stored resume data with ID: {resume_data['id']}")
+                logger.debug(f"Stored data: {json.dumps(result.data[0], indent=2)}")
                 return result.data[0]
             except Exception as insert_error:
                 # Check if it's a materialized view permission error

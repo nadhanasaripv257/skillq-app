@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from backend.supabase_client import SupabaseClient
 from backend.openai_client import OpenAIClient
 from PyPDF2 import PdfReader
@@ -10,6 +10,7 @@ import concurrent.futures
 from io import BytesIO
 import tempfile
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,124 @@ class ResumeProcessor:
             logger.error(f"Error reading PDF file: {str(e)}", exc_info=True)
             raise Exception(f"Error reading PDF file: {str(e)}")
 
+    def calculate_risk_score(self, parsed_data: Dict) -> Tuple[int, List[str]]:
+        """
+        Calculate risk score and identify issues in the resume based on the parsed data.
+        Risk score is on a scale of 0-10, where:
+        0-2: Low risk
+        3-5: Medium risk
+        6-8: High risk
+        9-10: Very high risk
+        
+        Risk Factors:
+        - Overlapping roles (2 points)
+        - Unrealistic skill claims (1 point per claim)
+        - Multiple short job stints (2 points)
+        - Inconsistent title progression (1 point)
+        - Not enough details in resume (1 point)
+        - Missing key information (1 point per missing item)
+        - Employment gaps (1 point per significant gap)
+        - Education-job mismatch (1 point)
+        
+        Returns:
+            Tuple[int, List[str]]: (risk_score, list_of_issues)
+        """
+        risk_score = 0
+        issues = []
+        
+        try:
+            work_experience = parsed_data.get('work_experience', {})
+            skills_and_tools = parsed_data.get('skills_and_tools', {})
+            personal_info = parsed_data.get('personal_info', {})
+            education = parsed_data.get('education_and_certifications', {})
+            
+            # Check for overlapping roles
+            job_titles = work_experience.get('previous_job_titles', [])
+            if len(set(job_titles)) < len(job_titles):
+                risk_score += 2
+                issues.append("Overlapping roles detected in work history")
+            
+            # Check for unrealistic skill claims
+            skills = skills_and_tools.get('skills', [])
+            tools = skills_and_tools.get('tools_technologies', [])
+            years_experience = work_experience.get('total_years_experience', 0)
+            
+            # Calculate skill density (skills per year of experience)
+            if years_experience > 0:
+                skill_density = len(skills) / years_experience
+                if skill_density > 3:  # More than 3 skills per year of experience
+                    risk_score += 1
+                    issues.append(f"High skill density ({skill_density:.1f} skills/year) for experience level")
+            
+            # Check for multiple short job stints
+            companies = work_experience.get('companies_worked_at', [])
+            if len(companies) > 3 and years_experience < 5:
+                risk_score += 2
+                issues.append("Multiple short job stints detected")
+            
+            # Check for inconsistent title progression
+            if len(job_titles) > 1:
+                # Check for title demotion
+                if any('senior' in title.lower() for title in job_titles[:-1]) and 'senior' not in job_titles[-1].lower():
+                    risk_score += 1
+                    issues.append("Inconsistent title progression detected")
+                
+                # Check for rapid promotions
+                if len(job_titles) > 2 and years_experience < 3:
+                    risk_score += 1
+                    issues.append("Rapid career progression detected")
+            
+            # Check for insufficient details
+            if not work_experience.get('summary_statement') or len(work_experience.get('summary_statement', '')) < 100:
+                risk_score += 1
+                issues.append("Insufficient details in resume")
+            
+            # Check for missing key information
+            missing_info = []
+            if not personal_info.get('email'):
+                missing_info.append("email")
+            if not personal_info.get('phone'):
+                missing_info.append("phone")
+            if not personal_info.get('location'):
+                missing_info.append("location")
+            if not education.get('education'):
+                missing_info.append("education details")
+            
+            if missing_info:
+                risk_score += 1
+                issues.append(f"Missing key information: {', '.join(missing_info)}")
+            
+            # Check for education-job mismatch
+            degree_level = education.get('degree_level', [])
+            if degree_level and work_experience.get('current_or_last_job_title'):
+                current_title = work_experience['current_or_last_job_title'].lower()
+                # Check if someone with a high degree is in an entry-level position
+                if any('phd' in level.lower() or 'doctorate' in level.lower() for level in degree_level) and \
+                   any(word in current_title for word in ['junior', 'entry', 'associate', 'trainee']):
+                    risk_score += 1
+                    issues.append("Education level appears mismatched with current role")
+            
+            # Normalize score to 0-10 range
+            # The maximum possible raw score is 10 (2 + 1 + 2 + 1 + 1 + 1 + 1 + 1)
+            normalized_score = min(10, risk_score)
+            
+            # Add risk level to issues
+            risk_level = "Low"
+            if normalized_score >= 9:
+                risk_level = "Very High"
+            elif normalized_score >= 6:
+                risk_level = "High"
+            elif normalized_score >= 3:
+                risk_level = "Medium"
+            
+            issues.insert(0, f"Risk Level: {risk_level} ({normalized_score}/10)")
+            
+            return normalized_score, issues
+            
+        except Exception as e:
+            logger.error(f"Error calculating risk score: {str(e)}", exc_info=True)
+            return 0, ["Error calculating risk score"]
+
     def process_resume(self, file_path: str) -> Dict:
         """
         Process a resume file and return structured data
@@ -61,84 +180,73 @@ class ResumeProcessor:
             raise Exception(f"Error in resume processing workflow: {str(e)}")
 
     def process_resume_content(self, file_content: bytes, file_name: str) -> Dict:
-        """
-        Process resume content directly and return structured data
-        """
+        """Process resume content and return structured data"""
         try:
             logger.info(f"Processing resume content for file: {file_name}")
             
-            # Generate file hash for caching
-            file_hash = self._get_file_hash(file_content)
-            logger.debug(f"Generated file hash: {file_hash}")
+            # Parse resume using ResumeParser
+            pii_data, sanitized_content = self.parser.process_resume(file_content, file_name)
+            logger.debug(f"Extracted PII data: {json.dumps(pii_data, indent=2)}")
             
-            # Check memory cache first
-            if file_hash in self._cache:
-                logger.debug("Found data in memory cache")
-                cached_data = self._cache[file_hash]
-            else:
-                # Check Supabase cache
-                logger.debug("Checking Supabase cache")
-                cached_data = self.supabase.get_cached_resume_data(file_hash)
-                if cached_data:
-                    logger.debug("Found data in Supabase cache")
-                    self._cache[file_hash] = cached_data
-
-            # If we have cached data, we still need to store it in the resumes table
-            if cached_data:
-                logger.debug("Found cached data, storing in resumes table")
-                # Store the resume file in Supabase if not already stored
-                if 'file_url' not in cached_data:
-                    logger.debug("Storing resume file in Supabase storage")
-                    file_url = self.supabase.store_resume_file(file_content, file_name)
-                    cached_data['file_url'] = file_url
-
-                # Store the parsed data in Supabase
-                logger.debug("Storing parsed data in resumes table")
-                id = self.supabase.store_resume_data(cached_data)
-                return {
-                    'id': id,
-                    'parsed_data': cached_data.get('parsed_data', {})
+            # Parse resume using OpenAI
+            structured_data = self.openai.parse_resume(sanitized_content)
+            logger.debug(f"Extracted structured data: {json.dumps(structured_data, indent=2)}")
+            
+            # Merge the data with proper structure
+            parsed_data = {
+                'personal_info': {
+                    'full_name': pii_data.get('full_name'),
+                    'email': pii_data.get('email'),
+                    'phone': pii_data.get('phone'),
+                    'location': structured_data.get('personal_info', {}).get('location'),
+                    'linkedin_url': structured_data.get('personal_info', {}).get('linkedin_url')
+                },
+                'work_experience': {
+                    'total_years_experience': structured_data.get('work_experience', {}).get('total_years_experience', 0),
+                    'current_or_last_job_title': structured_data.get('work_experience', {}).get('current_or_last_job_title'),
+                    'previous_job_titles': structured_data.get('work_experience', {}).get('previous_job_titles', []),
+                    'companies_worked_at': structured_data.get('work_experience', {}).get('companies_worked_at', []),
+                    'employment_type': structured_data.get('work_experience', {}).get('employment_type'),
+                    'availability': structured_data.get('work_experience', {}).get('availability')
+                },
+                'skills_and_tools': {
+                    'skills': structured_data.get('skills_and_tools', {}).get('skills', []),
+                    'skill_categories': structured_data.get('skills_and_tools', {}).get('skill_categories', {}),
+                    'tools_technologies': structured_data.get('skills_and_tools', {}).get('tools_technologies', [])
+                },
+                'education_and_certifications': {
+                    'education': structured_data.get('education_and_certifications', {}).get('education', []),
+                    'degree_level': structured_data.get('education_and_certifications', {}).get('degree_level', []),
+                    'certifications': structured_data.get('education_and_certifications', {}).get('certifications', [])
+                },
+                'additional_info': {
+                    'summary_statement': structured_data.get('additional_info', {}).get('summary_statement'),
+                    'languages_spoken': structured_data.get('additional_info', {}).get('languages_spoken', [])
                 }
-
-            # If no cached data, process the resume
-            logger.debug("No cached data found, processing resume")
-            # Read the PDF file
-            logger.debug("Reading PDF content")
-            content = self.read_pdf(file_content)
-
-            # Parse resume with OpenAI
-            logger.debug("Parsing resume with OpenAI")
-            parsed_data = self.openai.parse_resume(content)
-
-            # Store the resume file in Supabase
-            logger.debug("Storing resume file in Supabase storage")
-            file_url = self.supabase.store_resume_file(file_content, file_name)
-
-            # Prepare the final data
-            result_data = {
-                'file_url': file_url,
+            }
+            
+            # Calculate risk score
+            risk_score, issues = self.calculate_risk_score(parsed_data)
+            logger.debug(f"Calculated risk score: {risk_score}")
+            logger.debug(f"Identified issues: {json.dumps(issues, indent=2)}")
+            
+            # Store data in Supabase
+            data = {
+                'file_url': f"https://{self.supabase.project_ref}.supabase.co/storage/v1/object/public/resumes/{file_name}",
                 'parsed_data': parsed_data,
-                'file_hash': file_hash
+                'risk_score': risk_score,
+                'issues': issues
             }
-
-            # Store the parsed data in Supabase
-            logger.debug("Storing parsed data in Supabase")
-            id = self.supabase.store_resume_data(result_data)
-
-            # Cache the results
-            logger.debug("Caching results")
-            self._cache[file_hash] = result_data
-            self.supabase.cache_resume_data(file_hash, result_data)
-
-            logger.info(f"Successfully processed resume: {file_name}")
-            return {
-                'id': id,
-                'parsed_data': parsed_data
-            }
-
+            
+            logger.debug(f"Prepared data for storage: {json.dumps(data, indent=2)}")
+            result = self.supabase.store_resume_data(data)
+            logger.info(f"Successfully stored resume data with ID: {result.get('id')}")
+            
+            return result
+            
         except Exception as e:
-            logger.error(f"Error in resume processing workflow: {str(e)}", exc_info=True)
-            raise Exception(f"Error in resume processing workflow: {str(e)}")
+            logger.error(f"Error processing resume content: {str(e)}", exc_info=True)
+            raise
 
     def get_resume_data(self, id: str) -> Optional[Dict]:
         """

@@ -5,6 +5,7 @@ from pyresparser import ResumeParser as PyResParser
 import docx2txt
 from pdfminer.high_level import extract_text as pdf_extract_text
 import re
+import tempfile
 
 # Configure logging
 logging.basicConfig(
@@ -195,32 +196,46 @@ class ResumeParser:
                 'raw_text': None
             }
 
-    def process_resume(self, file_path: str) -> Tuple[Dict, str]:
+    def process_resume(self, file_content: bytes, file_name: str) -> Tuple[Dict, str]:
         """
         Process a resume file and return PII data and sanitized content
         
+        Args:
+            file_content: The raw bytes of the resume file
+            file_name: The name of the file
+            
         Returns:
             Tuple[Dict, str]: (PII data dictionary, sanitized content)
         """
-        logger.info(f"Processing resume: {file_path}")
+        logger.info(f"Processing resume: {file_name}")
         
         try:
-            # Extract PII data using LLM
-            pii_data = self.extract_pii(file_path)
+            # Create a temporary file to store the content
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as temp_file:
+                temp_file.write(file_content)
+                temp_file_path = temp_file.name
             
-            # Get sanitized content
-            sanitized_content = pii_data.get('raw_text', '')
-            
-            # Remove PII from content
-            if pii_data['email']:
-                sanitized_content = sanitized_content.replace(pii_data['email'], '[EMAIL]')
-            if pii_data['phone']:
-                sanitized_content = sanitized_content.replace(pii_data['phone'], '[PHONE]')
-            if pii_data['full_name']:
-                sanitized_content = sanitized_content.replace(pii_data['full_name'], '[NAME]')
+            try:
+                # Extract PII data using LLM
+                pii_data = self.extract_pii(temp_file_path)
+                
+                # Get sanitized content
+                sanitized_content = pii_data.get('raw_text', '')
+                
+                # Remove PII from content
+                if pii_data['email']:
+                    sanitized_content = sanitized_content.replace(pii_data['email'], '[EMAIL]')
+                if pii_data['phone']:
+                    sanitized_content = sanitized_content.replace(pii_data['phone'], '[PHONE]')
+                if pii_data['full_name']:
+                    sanitized_content = sanitized_content.replace(pii_data['full_name'], '[NAME]')
 
-            logger.info("Resume processing complete")
-            return pii_data, sanitized_content
+                logger.info("Resume processing complete")
+                return pii_data, sanitized_content
+                
+            finally:
+                # Clean up the temporary file
+                os.unlink(temp_file_path)
             
         except Exception as e:
             logger.error(f"Error processing resume: {str(e)}")

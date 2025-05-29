@@ -82,12 +82,19 @@ class OpenAIClient:
                     "languages_spoken": ["string"]
                 }
             }
+
+            Important:
+            1. Always return the complete structure with all fields, even if they are null or empty arrays
+            2. For arrays, return an empty array [] if no items found, not null
+            3. For objects, return an empty object {} if no data found, not null
+            4. For numbers, return 0 if not found, not null
+            5. For strings, return null if not found
             """
 
             response = self.client.chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
-                    {"role": "system", "content": "You are a resume parsing assistant. Extract structured information from resume text. Be precise and accurate in your extraction."},
+                    {"role": "system", "content": "You are a resume parsing assistant. Extract structured information from resume text. Be precise and accurate in your extraction. Always return the complete data structure with all fields."},
                     {"role": "user", "content": f"{prompt}\n\nResume text:\n{resume_text}"}
                 ],
                 response_format={ "type": "json_object" }
@@ -95,10 +102,87 @@ class OpenAIClient:
 
             # Parse the JSON response
             parsed_data = json.loads(response.choices[0].message.content)
+            
+            # Ensure all required fields are present with proper defaults
+            default_structure = {
+                "personal_info": {
+                    "full_name": None,
+                    "email": None,
+                    "phone": None,
+                    "location": None,
+                    "linkedin_url": None
+                },
+                "work_experience": {
+                    "total_years_experience": 0,
+                    "current_or_last_job_title": None,
+                    "previous_job_titles": [],
+                    "companies_worked_at": [],
+                    "employment_type": None,
+                    "availability": None
+                },
+                "skills_and_tools": {
+                    "skills": [],
+                    "skill_categories": {},
+                    "tools_technologies": []
+                },
+                "education_and_certifications": {
+                    "education": [],
+                    "degree_level": [],
+                    "certifications": []
+                },
+                "additional_info": {
+                    "summary_statement": None,
+                    "languages_spoken": []
+                }
+            }
+            
+            # Merge the parsed data with defaults
+            for section in default_structure:
+                if section not in parsed_data:
+                    parsed_data[section] = default_structure[section]
+                else:
+                    for field, default_value in default_structure[section].items():
+                        if field not in parsed_data[section]:
+                            parsed_data[section][field] = default_value
+                        elif parsed_data[section][field] is None:
+                            parsed_data[section][field] = default_value
+            
             return parsed_data
 
         except Exception as e:
-            raise Exception(f"Error parsing resume with OpenAI: {str(e)}")
+            logger.error(f"Error parsing resume with OpenAI: {str(e)}")
+            # Return default structure on error
+            return {
+                "personal_info": {
+                    "full_name": None,
+                    "email": None,
+                    "phone": None,
+                    "location": None,
+                    "linkedin_url": None
+                },
+                "work_experience": {
+                    "total_years_experience": 0,
+                    "current_or_last_job_title": None,
+                    "previous_job_titles": [],
+                    "companies_worked_at": [],
+                    "employment_type": None,
+                    "availability": None
+                },
+                "skills_and_tools": {
+                    "skills": [],
+                    "skill_categories": {},
+                    "tools_technologies": []
+                },
+                "education_and_certifications": {
+                    "education": [],
+                    "degree_level": [],
+                    "certifications": []
+                },
+                "additional_info": {
+                    "summary_statement": None,
+                    "languages_spoken": []
+                }
+            }
 
     def extract_query_filters(self, query: str) -> Dict:
         """
