@@ -1,11 +1,11 @@
 import os
 import logging
 from typing import Dict, Optional, Tuple
-from pyresparser import ResumeParser as PyResParser
 import docx2txt
 from pdfminer.high_level import extract_text as pdf_extract_text
-import re
 import tempfile
+from openai import OpenAI
+import json
 
 # Configure logging
 logging.basicConfig(
@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 class ResumeParser:
     def __init__(self):
-        pass
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY must be set in environment variables")
+        self.client = OpenAI(api_key=api_key)
 
     def clean_text(self, text: str) -> str:
         """Clean text by removing null bytes and invalid Unicode characters"""
@@ -47,7 +50,7 @@ class ResumeParser:
             raise
 
     def extract_pii(self, file_path: str) -> Dict:
-        """Extract PII information from resume using LLM and regex patterns"""
+        """Extract PII information from resume using OpenAI"""
         logger.info(f"Starting PII extraction for {file_path}")
         
         try:
@@ -68,108 +71,69 @@ class ResumeParser:
             raw_text = self.extract_text_from_file(file_path)
             pii_data['raw_text'] = raw_text
             
-            # Use regex patterns to extract PII
-            # Email pattern
-            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-            email_match = re.search(email_pattern, raw_text)
-            if email_match:
-                pii_data['email'] = email_match.group(0)
-            
-            # Enhanced phone patterns with better validation
-            phone_patterns = [
-                # Look for labeled phone numbers first
-                r'(?:phone|mobile|cell|tel|telephone)[\s:]+([+\d\s\-\(\)\.]{10,})',
-                r'(?:ph|mob|tel)[\s:]+([+\d\s\-\(\)\.]{10,})',
-                
-                # Standard formats
-                r'(?:\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',  # Standard US format
-                r'\d{3}[-.\s]?\d{3}[-.\s]?\d{4}',  # Simple format
-                r'\(\d{3}\)\s*\d{3}[-.\s]?\d{4}',  # (123) 456-7890
-                r'\+\d{1,3}\s*\d{3}[-.\s]?\d{3}[-.\s]?\d{4}',  # International format
-                
-                # Additional formats
-                r'\d{3}\.\d{3}\.\d{4}',  # 123.456.7890
-                r'\d{3}\s\d{3}\s\d{4}',  # 123 456 7890
-                r'\+\d{1,3}\.\d{3}\.\d{3}\.\d{4}',  # +1.123.456.7890
-                r'\+\d{1,3}\s\d{3}\s\d{3}\s\d{4}'  # +1 123 456 7890
-            ]
-            
-            # First try to find labeled phone numbers
-            for pattern in phone_patterns[:2]:
-                phone_match = re.search(pattern, raw_text, re.IGNORECASE)
-                if phone_match:
-                    phone = phone_match.group(1) if len(phone_match.groups()) > 0 else phone_match.group(0)
-                    # Clean the phone number
-                    phone = re.sub(r'[^\d+]', '', phone)
-                    if len(phone) >= 10:  # Basic validation
-                        pii_data['phone'] = phone
-                        break
-            
-            # If no labeled phone found, try other patterns
-            if not pii_data['phone']:
-                for pattern in phone_patterns[2:]:
-                    phone_match = re.search(pattern, raw_text)
-                    if phone_match:
-                        phone = phone_match.group(0)
-                        # Clean the phone number
-                        phone = re.sub(r'[^\d+]', '', phone)
-                        if len(phone) >= 10:  # Basic validation
-                            pii_data['phone'] = phone
-                            break
-            
-            # Name pattern (look for common name indicators)
-            name_indicators = [
-                r'Name:\s*([A-Za-z\s]+)',
-                r'Full Name:\s*([A-Za-z\s]+)',
-                r'^([A-Za-z\s]+)$',  # Standalone name at start of line
-                r'([A-Za-z\s]+)\s*\|'  # Name followed by separator
-            ]
-            
-            for pattern in name_indicators:
-                name_match = re.search(pattern, raw_text)
-                if name_match:
-                    pii_data['full_name'] = name_match.group(1).strip()
-                    break
-            
-            # Use LLM to extract additional information
+            # Use OpenAI to extract information
             try:
-                parser = PyResParser(file_path)
-                pyres_data = parser.get_extracted_data()
+                prompt = """
+                Extract the following information from the resume text. If any information is not present, set it to null:
+
+                Personal Information:
+                - full_name: The candidate's full name (if present)
+                - email: The candidate's email address (if present)
+                - phone: The candidate's phone number (if present)
+
+                Work Experience:
+                - companies_worked_at: List of companies the candidate has worked at
+                - job_titles: List of job titles held
+                - total_years: Total years of experience (as a number)
+
+                Skills and Education:
+                - skills: List of skills mentioned
+                - education: List of educational qualifications
+
+                Format the response as a JSON object with the following structure:
+                {
+                    "full_name": "string or null",
+                    "email": "string or null",
+                    "phone": "string or null",
+                    "companies_worked_at": ["string"],
+                    "job_titles": ["string"],
+                    "total_years": number,
+                    "skills": ["string"],
+                    "education": ["string"]
+                }
+
+                Important:
+                1. Always return the complete structure with all fields
+                2. For arrays, return an empty array [] if no items found
+                3. For numbers, return 0 if not found
+                4. For strings, return null if not found
+                """
+
+                response = self.client.chat.completions.create(
+                    model="gpt-4-turbo-preview",
+                    messages=[
+                        {"role": "system", "content": "You are a resume parsing assistant. Extract structured information from resume text. Be precise and accurate in your extraction."},
+                        {"role": "user", "content": f"{prompt}\n\nResume text:\n{raw_text}"}
+                    ],
+                    response_format={ "type": "json_object" }
+                )
+
+                # Parse the JSON response
+                extracted_data = json.loads(response.choices[0].message.content)
                 
-                # Only update PII if not already found by regex
-                if not pii_data['email']:
-                    pii_data['email'] = pyres_data.get('email')
-                if not pii_data['phone']:
-                    pii_data['phone'] = pyres_data.get('mobile_number')
-                if not pii_data['full_name']:
-                    pii_data['full_name'] = pyres_data.get('name')
-                
-                # Extract work experience
-                if pyres_data.get('experience'):
-                    for exp in pyres_data['experience']:
-                        if exp.get('company'):
-                            pii_data['companies_worked_at'].append(exp['company'])
-                        if exp.get('title'):
-                            pii_data['job_titles'].append(exp['title'])
-                
-                # Extract skills
-                if pyres_data.get('skills'):
-                    pii_data['skills'] = pyres_data['skills']
-                
-                # Extract education
-                if pyres_data.get('degree'):
-                    pii_data['education'] = [pyres_data['degree']]
-                
-                # Estimate total years
-                if pyres_data.get('total_experience'):
-                    try:
-                        pii_data['total_years'] = int(pyres_data['total_experience'])
-                    except (ValueError, TypeError):
-                        pass
+                # Update PII data with extracted information
+                pii_data['full_name'] = extracted_data.get('full_name')
+                pii_data['email'] = extracted_data.get('email')
+                pii_data['phone'] = extracted_data.get('phone')
+                pii_data['companies_worked_at'] = extracted_data.get('companies_worked_at', [])
+                pii_data['job_titles'] = extracted_data.get('job_titles', [])
+                pii_data['total_years'] = extracted_data.get('total_years', 0)
+                pii_data['skills'] = extracted_data.get('skills', [])
+                pii_data['education'] = extracted_data.get('education', [])
                 
             except Exception as e:
-                logger.error(f"LLM extraction failed: {str(e)}")
-                # Continue with regex-extracted data
+                logger.error(f"OpenAI extraction failed: {str(e)}")
+                raise
             
             # Clean all extracted data
             for key, value in pii_data.items():
@@ -216,7 +180,7 @@ class ResumeParser:
                 temp_file_path = temp_file.name
             
             try:
-                # Extract PII data using LLM
+                # Extract PII data using OpenAI
                 pii_data = self.extract_pii(temp_file_path)
                 
                 # Get sanitized content
