@@ -209,6 +209,11 @@ def refine_search_candidates(query, current_filters):
         df = pd.DataFrame(final_candidates)
         logger.info(f"Found {len(df)} unique candidates")
         
+        # Return early if no candidates found
+        if len(df) == 0:
+            logger.info("No matching candidates found")
+            return [], current_filters
+        
         # Log detailed matching information
         for _, candidate in df.iterrows():
             logger.info(f"\nCandidate: {candidate['full_name']}")
@@ -272,7 +277,9 @@ def update_outreach_count(candidate_id: str):
 def format_candidate_response(candidates):
     """Format candidate search results into a table with rankings"""
     if not candidates:
-        return "I couldn't find any candidates matching your criteria."
+        st.error("❌ No matching candidates found for your search criteria.")
+        st.info("Try adjusting your search criteria or filters to find more candidates.")
+        return "No matching candidates found."
     
     # Get ranked candidates
     ranked_candidates = openai_client.rank_candidates(
