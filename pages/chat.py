@@ -9,6 +9,7 @@ from backend.supabase_client import SupabaseClient
 import pandas as pd
 import logging
 import time
+import uuid
 
 # Configure logging
 logging.basicConfig(
@@ -408,6 +409,7 @@ def format_candidate_response(candidates):
                             
                             # Save to Supabase
                             data = {
+                                'id': str(uuid.uuid4()),  # Add generated UUID
                                 'recruiter_id': recruiter_id,
                                 'candidate_id': candidate['id'],
                                 'outreach_message': outreach_message,

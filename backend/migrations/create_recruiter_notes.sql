@@ -2,11 +2,18 @@
 CREATE TABLE IF NOT EXISTS recruiter_notes (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     recruiter_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    candidate_id UUID REFERENCES resumes(id) ON DELETE CASCADE,
+    candidate_id UUID NOT NULL,
     outreach_message TEXT,
     screening_questions TEXT[],
+    contact_status BOOLEAN DEFAULT FALSE,
+    follow_up_required BOOLEAN DEFAULT FALSE,
+    follow_up_date TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT fk_candidate
+        FOREIGN KEY (candidate_id)
+        REFERENCES resumes(id)
+        ON DELETE CASCADE
 );
 
 -- Create index for faster lookups

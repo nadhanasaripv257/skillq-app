@@ -316,7 +316,8 @@ def main():
                 try:
                     # Convert the date to ISO format with timezone
                     if pd.notna(row['Follow-up Date']):
-                        follow_up_date = row['Follow-up Date'].strftime('%Y-%m-%dT00:00:00Z')
+                        # Convert to datetime and format with timezone
+                        follow_up_date = pd.to_datetime(row['Follow-up Date']).tz_localize('UTC').isoformat()
                     else:
                         follow_up_date = None
                 except (AttributeError, ValueError) as e:
@@ -452,9 +453,15 @@ def main():
                 
                 if st.form_submit_button("Update Follow-up Status"):
                     try:
+                        # Convert the date to ISO format with timezone
+                        if new_follow_up_date:
+                            follow_up_date = pd.to_datetime(new_follow_up_date).tz_localize('UTC').isoformat()
+                        else:
+                            follow_up_date = None
+                            
                         data = {
                             'follow_up_required': new_follow_up_required,
-                            'follow_up_date': new_follow_up_date.strftime('%Y-%m-%dT00:00:00Z') if new_follow_up_date else None,
+                            'follow_up_date': follow_up_date,
                             'updated_at': datetime.now(UTC).isoformat()
                         }
                         
