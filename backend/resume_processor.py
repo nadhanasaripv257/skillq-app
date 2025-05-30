@@ -184,13 +184,24 @@ class ResumeProcessor:
             structured_data = self.openai.parse_resume(sanitized_content)
             logger.debug(f"Extracted structured data: {json.dumps(structured_data, indent=2)}")
             
+            # Extract location components
+            location = structured_data.get('personal_info', {}).get('location', '')
+            location_parts = [part.strip() for part in location.split(',')] if location else []
+            
+            # Extract city, state, and country
+            city = location_parts[0] if len(location_parts) > 0 else None
+            state = location_parts[1] if len(location_parts) > 1 else None
+            country = location_parts[2] if len(location_parts) > 2 else 'Australia'  # Default to Australia if not specified
+            
             # Merge the data with proper structure
             parsed_data = {
                 'personal_info': {
                     'full_name': pii_data.get('full_name'),
                     'email': pii_data.get('email'),
                     'phone': pii_data.get('phone'),
-                    'location': structured_data.get('personal_info', {}).get('location'),
+                    'location': city,  # Store only city in location field
+                    'state': state,    # Store state separately
+                    'country': country, # Store country separately
                     'linkedin_url': structured_data.get('personal_info', {}).get('linkedin_url')
                 },
                 'work_experience': {

@@ -101,7 +101,9 @@ class SupabaseClient:
                 'full_name': personal_info.get('full_name'),
                 'email': personal_info.get('email'),
                 'phone': personal_info.get('phone'),
-                'location': personal_info.get('location'),
+                'location': personal_info.get('location'),  # City only
+                'state': personal_info.get('state'),        # State
+                'country': personal_info.get('country'),    # Country
                 'linkedin_url': personal_info.get('linkedin_url'),
                 
                 # Work Experience

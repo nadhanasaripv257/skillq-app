@@ -23,7 +23,7 @@ class OpenAIClient:
             - full_name: The candidate's full name (if present)
             - email: The candidate's email address (if present)
             - phone: The candidate's phone number (if present)
-            - location: The city and state or region (e.g., Melbourne, VIC)
+            - location: The city, state, and country in format "City, State, Country" (e.g., "Sydney, NSW, Australia" or "Melbourne, VIC, Australia")
             - linkedin_url: LinkedIn profile link if available
 
             Work Experience:
@@ -89,6 +89,8 @@ class OpenAIClient:
             3. For objects, return an empty object {} if no data found, not null
             4. For numbers, return 0 if not found, not null
             5. For strings, return null if not found
+            6. For location, always use the format "City, State, Country" with proper capitalization and state abbreviations (e.g., "Sydney, NSW, Australia", "Melbourne, VIC, Australia")
+            7. If country is not specified in the resume, default to "Australia"
             """
 
             response = self.client.chat.completions.create(
