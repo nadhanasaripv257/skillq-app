@@ -41,6 +41,20 @@ supabase_client = SupabaseClient()
 def get_resume_processor():
     return ResumeProcessor()
 
+def file_uploader_with_reset(label, file_type, key_base, multiple=False):
+    """Helper function to create a file uploader with automatic reset capability"""
+    reset_key = f"reset_{key_base}"
+    input_key = f"{key_base}_{int(time.time())}" if reset_key in st.session_state else key_base
+    uploader = st.file_uploader(
+        label,
+        type=file_type,
+        key=input_key,
+        accept_multiple_files=multiple
+    )
+    if reset_key in st.session_state:
+        del st.session_state[reset_key]
+    return uploader
+
 def initialize_session_state():
     """Initialize session state variables"""
     if 'authenticated' not in st.session_state:
@@ -49,6 +63,10 @@ def initialize_session_state():
         st.session_state.user_email = None
     if 'user_id' not in st.session_state:
         st.session_state.user_id = None
+    if 'upload_key' not in st.session_state:
+        st.session_state.upload_key = 0
+    if 'bulk_upload_key' not in st.session_state:
+        st.session_state.bulk_upload_key = 0
 
 def process_single_upload(file_content, file_name, user_id):
     """Process a single file upload with caching and error recovery"""
@@ -57,17 +75,36 @@ def process_single_upload(file_content, file_name, user_id):
     
     logger.info(f"Starting to process file: {file_name}")
     
+    # Create a progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     while retry_count < max_retries:
         try:
             processor = get_resume_processor()
             
             # Update progress for each step
-            logger.debug(f"Processing file {file_name} - Reading file...")
+            status_text.text("Reading file...")
+            progress_bar.progress(25)
             
-            logger.debug(f"Processing file {file_name} - Processing content...")
-            result = processor.process_resume_content(file_content, file_name)
+            # Process content in parallel with progress updates
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Start the processing in a separate thread
+                future = executor.submit(processor.process_resume_content, file_content, file_name)
+                
+                # Update progress while processing
+                while not future.done():
+                    status_text.text("Processing content...")
+                    progress_bar.progress(50)
+                    time.sleep(0.1)  # Reduced delay for smoother progress
+                
+                result = future.result()
             
-            logger.debug(f"Processing file {file_name} - Storing data...")
+            status_text.text("Storing data...")
+            progress_bar.progress(75)
+            
+            status_text.text("Complete!")
+            progress_bar.progress(100)
             
             logger.info(f"Successfully processed file: {file_name}")
             return result
@@ -84,7 +121,7 @@ def process_single_upload(file_content, file_name, user_id):
 
 def process_bulk_upload(uploaded_files):
     """Process multiple files in parallel with batch processing and memory optimization"""
-    batch_size = 5  # Process 5 files at a time
+    batch_size = 10  # Increased batch size for better throughput
     results = []
     total_files = len(uploaded_files)
     
@@ -92,13 +129,19 @@ def process_bulk_upload(uploaded_files):
     
     # Create a progress bar for overall progress
     progress_bar = st.progress(0)
+    status_text = st.empty()
+    status_text.text(f"Starting upload of {total_files} files...")
     
     for i in range(0, total_files, batch_size):
         batch = uploaded_files[i:i + batch_size]
-        logger.debug(f"Processing batch {i//batch_size + 1} of {(total_files + batch_size - 1)//batch_size}")
+        current_batch = i // batch_size + 1
+        total_batches = (total_files + batch_size - 1) // batch_size
         
-        # Dynamically set max_workers based on CPU count
-        max_workers = min(len(batch), multiprocessing.cpu_count())
+        logger.debug(f"Processing batch {current_batch} of {total_batches}")
+        status_text.text(f"Processing batch {current_batch} of {total_batches}...")
+        
+        # Dynamically set max_workers based on CPU count and available memory
+        max_workers = min(len(batch), multiprocessing.cpu_count() * 2)  # Increased worker count
         logger.debug(f"Using {max_workers} worker threads for batch processing")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -107,30 +150,41 @@ def process_bulk_upload(uploaded_files):
                     process_single_upload,
                     file.getvalue(),
                     file.name,
-                    st.session_state.user_id
+                    st.session_state.get('user_id')
                 ): file 
                 for file in batch
             }
             
+            # Track progress within the batch
+            completed = 0
             for future in concurrent.futures.as_completed(future_to_file):
                 file = future_to_file[future]
                 try:
                     result = future.result()
                     results.append((file.name, bool(result)))
+                    completed += 1
+                    # Update progress within batch
+                    batch_progress = completed / len(batch)
+                    overall_progress = (i + completed) / total_files
+                    progress_bar.progress(overall_progress)
+                    status_text.text(f"Processing batch {current_batch} of {total_batches}... ({completed}/{len(batch)} files)")
                     logger.info(f"Successfully processed {file.name}")
                 except Exception as e:
                     results.append((file.name, False))
                     logger.error(f"Error processing {file.name}: {str(e)}", exc_info=True)
                     st.error(f"Error processing {file.name}: {str(e)}")
         
-        # Update overall progress
-        progress = min(1.0, (i + batch_size) / total_files)
-        progress_bar.progress(progress, f"Processing files... ({i + len(batch)}/{total_files})")
+        # Update overall progress after batch completion
+        progress = min(1.0, (i + len(batch)) / total_files)
+        status_text.text(f"Completed batch {current_batch} of {total_batches}")
+        progress_bar.progress(progress)
     
     # Show completion
-    progress_bar.progress(1.0, "Complete!")
+    success_count = sum(1 for _, success in results if success)
+    status_text.text(f"Upload complete! Successfully processed {success_count} out of {total_files} files")
+    progress_bar.progress(1.0)
     
-    logger.info(f"Bulk upload completed. Successfully processed {sum(1 for _, success in results if success)} out of {total_files} files")
+    logger.info(f"Bulk upload completed. Successfully processed {success_count} out of {total_files} files")
     return results
 
 def main():
@@ -143,7 +197,7 @@ def main():
     initialize_session_state()
     
     # Check if user is authenticated
-    if not st.session_state.authenticated:
+    if not st.session_state.get('authenticated', False):
         st.warning("Please login to access this page")
         if st.button("Go to Login"):
             st.switch_page("pages/login.py")
@@ -155,18 +209,17 @@ def main():
         st.switch_page("pages/home.py")
 
     st.title("📄 Resume Upload")
-    st.write(f"Welcome, {st.session_state.user_email}!")
+    st.write(f"Welcome, {st.session_state.get('user_email', 'User')}!")
 
     # Create two columns for single and bulk upload
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("Single Upload")
-        uploaded_file = st.file_uploader(
+        uploaded_file = file_uploader_with_reset(
             "Upload a resume",
-            type=['pdf', 'docx'],
-            help="Upload a single PDF or DOCX file",
-            key="single_upload"
+            ['pdf', 'docx'],
+            "single_upload"
         )
         
         if uploaded_file:
@@ -174,22 +227,23 @@ def main():
                 result = process_single_upload(
                     uploaded_file.getvalue(),
                     uploaded_file.name,
-                    st.session_state.user_id
+                    st.session_state.get('user_id')
                 )
                 if result:
-                    st.success(f"Successfully processed {uploaded_file.name}!")
-                    if st.button("Upload Another Resume"):
-                        st.session_state.single_upload = None
-                        st.rerun()
+                    # Store success message in session state
+                    st.session_state.upload_success = f"Successfully processed {uploaded_file.name}!"
+                    st.success(st.session_state.upload_success)
+                    # Set reset flag for the uploader
+                    st.session_state.reset_single_upload = True
+                    st.rerun()
 
     with col2:
         st.subheader("Bulk Upload")
-        uploaded_files = st.file_uploader(
+        uploaded_files = file_uploader_with_reset(
             "Upload multiple resumes",
-            type=['pdf', 'docx'],
-            accept_multiple_files=True,
-            help="Upload multiple PDF or DOCX files",
-            key="bulk_upload"
+            ['pdf', 'docx'],
+            "bulk_upload",
+            multiple=True
         )
         
         if uploaded_files:
@@ -197,17 +251,29 @@ def main():
                 results = process_bulk_upload(uploaded_files)
                 success_count = sum(1 for _, success in results if success)
                 
-                # Show success message
-                st.success(f"Successfully processed {success_count} out of {len(uploaded_files)} files")
+                # Store success message in session state
+                st.session_state.bulk_upload_success = f"Successfully processed {success_count} out of {len(uploaded_files)} files"
+                st.success(st.session_state.bulk_upload_success)
                 
                 # Show failed files if any
                 failed_files = [name for name, success in results if not success]
                 if failed_files:
                     st.warning(f"Failed to process: {', '.join(failed_files)}")
                 
-                if st.button("Upload More Resumes"):
-                    st.session_state.bulk_upload = None
-                    st.rerun()
+                # Set reset flag for the uploader
+                st.session_state.reset_bulk_upload = True
+                st.rerun()
+
+    # Display any stored success messages
+    if st.session_state.get('upload_success'):
+        st.success(st.session_state.upload_success)
+        # Clear the message after displaying
+        del st.session_state.upload_success
+    
+    if st.session_state.get('bulk_upload_success'):
+        st.success(st.session_state.bulk_upload_success)
+        # Clear the message after displaying
+        del st.session_state.bulk_upload_success
 
     # Add a logout button at the bottom
     st.markdown("---")
