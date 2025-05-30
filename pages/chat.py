@@ -146,82 +146,67 @@ def refine_search_candidates(query, current_filters):
         
         logger.info(f"Final filters after update: {json.dumps(current_filters, indent=2)}")
         
-        # Build the query
-        query = supabase_client.table('resumes').select(
-            'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
-        )
-
-        # Apply optional filters
-        if current_filters.get('location'):
-            query = query.ilike('location', f'%{current_filters["location"]}%')
-        
-        if current_filters.get('experience_years_min'):
-            query = query.gte('total_years_experience', current_filters['experience_years_min'])
-
-        # Initialize results list
-        all_results = []
-
-        # Get role matches
+        # Get all keywords from filters
+        keywords = []
         if current_filters.get('role'):
-            role_query = supabase_client.table('resumes').select(
-                'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
-            )
-            
-            # Apply location and experience filters if present
-            if current_filters.get('location'):
-                role_query = role_query.ilike('location', f'%{current_filters["location"]}%')
-            if current_filters.get('experience_years_min'):
-                role_query = role_query.gte('total_years_experience', current_filters['experience_years_min'])
-            
-            # Add main role condition
-            role_query = role_query.ilike('current_or_last_job_title', f'%{current_filters["role"]}%')
-            role_results = role_query.execute()
-            all_results.extend(role_results.data)
-            
-            # Add related roles
-            if current_filters.get('related_roles'):
-                for role in current_filters['related_roles']:
-                    related_query = supabase_client.table('resumes').select(
-                        'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
-                    )
-                    # Apply location and experience filters if present
-                    if current_filters.get('location'):
-                        related_query = related_query.ilike('location', f'%{current_filters["location"]}%')
-                    if current_filters.get('experience_years_min'):
-                        related_query = related_query.gte('total_years_experience', current_filters['experience_years_min'])
-                    
-                    related_query = related_query.ilike('current_or_last_job_title', f'%{role}%')
-                    related_results = related_query.execute()
-                    all_results.extend(related_results.data)
-
-        # Get skills matches
+            keywords.append(current_filters['role'].lower())
+        if current_filters.get('related_roles'):
+            keywords.extend([role.lower() for role in current_filters['related_roles']])
         if current_filters.get('required_skills'):
-            for skill in current_filters['required_skills']:
-                skill_query = supabase_client.table('resumes').select(
-                    'id, full_name, location, total_years_experience, current_or_last_job_title, skills'
-                )
-                
-                # Apply location and experience filters if present
-                if current_filters.get('location'):
-                    skill_query = skill_query.ilike('location', f'%{current_filters["location"]}%')
-                if current_filters.get('experience_years_min'):
-                    skill_query = skill_query.gte('total_years_experience', current_filters['experience_years_min'])
-                
-                # Use ilike for partial matching of skills
-                skill_query = skill_query.ilike('skills', f'%{skill}%')
-                skill_results = skill_query.execute()
-                all_results.extend(skill_results.data)
+            keywords.extend([skill.lower() for skill in current_filters['required_skills']])
 
-        # Remove duplicates based on id
-        seen_ids = set()
-        unique_results = []
-        for result in all_results:
-            if result['id'] not in seen_ids:
-                seen_ids.add(result['id'])
-                unique_results.append(result)
+        # Initialize set to store matched candidate IDs
+        matched_ids = set()
+
+        # First, search by keywords if any
+        if keywords:
+            for keyword in keywords:
+                # Build base query
+                keyword_query = supabase_client.table('resumes').select('id')
+                
+                # Add keyword search condition
+                if len(keyword) >= 3:
+                    # Allow partial matches for keywords >= 3 chars
+                    keyword_query = keyword_query.ilike('search_blob', f'%{keyword}%')
+                else:
+                    # Only exact matches for short keywords
+                    keyword_query = keyword_query.ilike('search_blob', f'%|{keyword}|%')
+                
+                # Execute query and collect IDs
+                response = keyword_query.execute()
+                for result in response.data:
+                    matched_ids.add(result['id'])
+        else:
+            # If no keywords, get all candidates
+            response = supabase_client.table('resumes').select('id').execute()
+            for result in response.data:
+                matched_ids.add(result['id'])
+
+        # Fetch full details for matched candidates
+        final_candidates = []
+        if matched_ids:
+            for candidate_id in matched_ids:
+                response = supabase_client.table('resumes')\
+                    .select('id, full_name, location, total_years_experience, current_or_last_job_title, skills, search_blob')\
+                    .eq('id', candidate_id)\
+                    .execute()
+                if response.data:
+                    candidate = response.data[0]
+                    
+                    # Apply location filter if present
+                    if current_filters.get('location'):
+                        if not candidate['location'] or current_filters['location'].lower() not in candidate['location'].lower():
+                            continue
+                    
+                    # Apply experience filter if present
+                    if current_filters.get('experience_years_min'):
+                        if not candidate['total_years_experience'] or candidate['total_years_experience'] < current_filters['experience_years_min']:
+                            continue
+                    
+                    final_candidates.append(candidate)
 
         # Convert to DataFrame for easier manipulation
-        df = pd.DataFrame(unique_results)
+        df = pd.DataFrame(final_candidates)
         logger.info(f"Found {len(df)} unique candidates")
         
         # Log detailed matching information
@@ -237,13 +222,21 @@ def refine_search_candidates(query, current_filters):
                 logger.info(f"✓ Matched location: {current_filters['location']}")
             if current_filters.get('experience_years_min'):
                 logger.info(f"✓ Matched experience: {current_filters['experience_years_min']}+ years")
-            if current_filters.get('role'):
-                logger.info(f"✓ Matched role: {current_filters['role']}")
-            if current_filters.get('required_skills'):
-                matched_skills = [skill for skill in current_filters['required_skills'] 
-                               if skill.upper() in [s.upper() for s in candidate['skills']]]
-                if matched_skills:
-                    logger.info(f"✓ Matched skills: {matched_skills}")
+            if keywords:
+                # Check for partial matches in the pipe-separated list
+                candidate_keywords = candidate['search_blob'].split('|')
+                matched_keywords = []
+                for kw in keywords:
+                    # For keywords >= 3 chars, allow partial matches
+                    if len(kw) >= 3:
+                        if any(kw in word for word in candidate_keywords):
+                            matched_keywords.append(kw)
+                    # For shorter keywords, only match exact words
+                    else:
+                        if kw in candidate_keywords:
+                            matched_keywords.append(kw)
+                if matched_keywords:
+                    logger.info(f"✓ Matched keywords: {matched_keywords}")
         
         # Convert back to list of dictionaries
         candidates = df.to_dict('records')
