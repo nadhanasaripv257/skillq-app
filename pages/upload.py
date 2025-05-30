@@ -9,8 +9,8 @@ import json
 from datetime import datetime
 import sys
 import concurrent.futures
+import multiprocessing
 from functools import lru_cache
-import hashlib
 import time
 import logging
 
@@ -50,11 +50,6 @@ def initialize_session_state():
     if 'user_id' not in st.session_state:
         st.session_state.user_id = None
 
-def get_file_hash(file_content):
-    """Generate a hash of the file content for caching"""
-    return hashlib.md5(file_content).hexdigest()
-
-@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour, hide spinner
 def process_single_upload(file_content, file_name, user_id):
     """Process a single file upload with caching and error recovery"""
     max_retries = 3
@@ -66,24 +61,15 @@ def process_single_upload(file_content, file_name, user_id):
         try:
             processor = get_resume_processor()
             
-            # Create a progress bar
-            progress_bar = st.progress(0)
-            
             # Update progress for each step
             logger.debug(f"Processing file {file_name} - Reading file...")
-            progress_bar.progress(0.2, "Reading file...")
             
             logger.debug(f"Processing file {file_name} - Processing content...")
-            progress_bar.progress(0.4, "Processing content...")
             result = processor.process_resume_content(file_content, file_name)
             
             logger.debug(f"Processing file {file_name} - Storing data...")
-            progress_bar.progress(0.8, "Storing data...")
-            progress_bar.progress(1.0, "Complete!")
             
             logger.info(f"Successfully processed file: {file_name}")
-            # Keep progress bar visible
-            time.sleep(1)
             return result
         except Exception as e:
             retry_count += 1
@@ -92,7 +78,9 @@ def process_single_upload(file_content, file_name, user_id):
                 st.error(f"Error processing file {file_name} after {max_retries} attempts: {str(e)}")
                 return None
             st.warning(f"Retrying {file_name} (attempt {retry_count + 1}/{max_retries})...")
-            time.sleep(1)  # Wait before retrying
+            # Implement exponential backoff for retries
+            backoff_time = min(2 ** retry_count, 10)  # Cap at 10 seconds
+            time.sleep(backoff_time)
 
 def process_bulk_upload(uploaded_files):
     """Process multiple files in parallel with batch processing and memory optimization"""
@@ -109,7 +97,11 @@ def process_bulk_upload(uploaded_files):
         batch = uploaded_files[i:i + batch_size]
         logger.debug(f"Processing batch {i//batch_size + 1} of {(total_files + batch_size - 1)//batch_size}")
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
+        # Dynamically set max_workers based on CPU count
+        max_workers = min(len(batch), multiprocessing.cpu_count())
+        logger.debug(f"Using {max_workers} worker threads for batch processing")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {
                 executor.submit(
                     process_single_upload,
@@ -137,7 +129,6 @@ def process_bulk_upload(uploaded_files):
     
     # Show completion
     progress_bar.progress(1.0, "Complete!")
-    time.sleep(1)
     
     logger.info(f"Bulk upload completed. Successfully processed {sum(1 for _, success in results if success)} out of {total_files} files")
     return results

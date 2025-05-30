@@ -137,25 +137,14 @@ def refine_search_candidates(query, current_filters):
         logger.info(f"Processing new search query: {query}")
         logger.info(f"Current filters before update: {json.dumps(current_filters, indent=2) if current_filters else 'None'}")
         
-        # Extract new filters from the query
+        # Extract new filters from the query first
         new_filters = openai_client.extract_query_filters(query)
         logger.info(f"LLM extracted filters: {json.dumps(new_filters, indent=2)}")
         
-        # Merge with existing filters
-        if current_filters:
-            # Update only the fields that are mentioned in the new query
-            if new_filters['location']:
-                current_filters['location'] = new_filters['location']
-            if new_filters['experience_years_min']:
-                current_filters['experience_years_min'] = new_filters['experience_years_min']
-            if new_filters['required_skills']:
-                current_filters['required_skills'] = new_filters['required_skills']
-            if new_filters['role']:
-                current_filters['role'] = new_filters['role']
-        else:
-            current_filters = new_filters
+        # Replace current filters with new filters instead of merging
+        current_filters = new_filters
         
-        logger.info(f"Final filters after merge: {json.dumps(current_filters, indent=2)}")
+        logger.info(f"Final filters after update: {json.dumps(current_filters, indent=2)}")
         
         # Build the query
         query = supabase_client.table('resumes').select(
@@ -218,7 +207,8 @@ def refine_search_candidates(query, current_filters):
                 if current_filters.get('experience_years_min'):
                     skill_query = skill_query.gte('total_years_experience', current_filters['experience_years_min'])
                 
-                skill_query = skill_query.contains('skills', [skill.upper()])
+                # Use ilike for partial matching of skills
+                skill_query = skill_query.ilike('skills', f'%{skill}%')
                 skill_results = skill_query.execute()
                 all_results.extend(skill_results.data)
 

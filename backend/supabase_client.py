@@ -137,7 +137,10 @@ class SupabaseClient:
                 'uploaded_by': 'system',
                 'uploaded_at': datetime.now(timezone.utc).isoformat(),
                 'created_at': datetime.now(timezone.utc).isoformat(),
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+                
+                # New field for search_blob
+                'search_blob': data.get('search_blob', '')
             }
             
             logger.debug(f"Prepared resume data for storage: {json.dumps(resume_data, indent=2)}")
