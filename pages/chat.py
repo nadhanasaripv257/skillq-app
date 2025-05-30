@@ -45,6 +45,8 @@ def initialize_session_state():
         st.session_state.last_outreach_time = {}
     if 'outreach_count' not in st.session_state:
         st.session_state.outreach_count = {}
+    if 'trigger_search' not in st.session_state:
+        st.session_state.trigger_search = False
 
 def get_candidate_skills():
     """Get all candidate skills from resumes and organize them by category"""
@@ -296,33 +298,29 @@ def format_candidate_response(candidates):
         
         # Create an expander for each candidate
         with st.expander(f"#{idx} {candidate['full_name']} - Score: {ranked['score']}/10", expanded=True):
-            # Display candidate details in columns
-            col1, col2 = st.columns([2, 1])
+            # Display candidate details
+            st.markdown(f"**Current Role:** {candidate['current_or_last_job_title']}")
+            st.markdown(f"**Experience:** {candidate['total_years_experience']} years")
+            st.markdown(f"**Location:** {candidate['location']}")
+            st.markdown("**Skills:**")
+            st.markdown(", ".join(candidate['skills']))
             
-            with col1:
-                st.markdown(f"**Current Role:** {candidate['current_or_last_job_title']}")
-                st.markdown(f"**Experience:** {candidate['total_years_experience']} years")
-                st.markdown(f"**Location:** {candidate['location']}")
-                st.markdown("**Skills:**")
-                st.markdown(", ".join(candidate['skills']))
-                
-                if 'education' in candidate and candidate['education']:
-                    st.markdown("**Education:**")
-                    st.markdown(", ".join(candidate['education']))
-                
-                # Add risk score and issues display
-                if 'risk_score' in candidate and candidate['risk_score']:
-                    st.markdown("**Risk Score:**")
-                    st.markdown(f"⚠️ {candidate['risk_score']}")
-                
-                if 'issues' in candidate and candidate['issues']:
-                    st.markdown("**Issues:**")
-                    st.markdown(f"🚨 {candidate['issues']}")
+            if 'education' in candidate and candidate['education']:
+                st.markdown("**Education:**")
+                st.markdown(", ".join(candidate['education']))
             
-            with col2:
-                st.markdown("**Match Reasoning:**")
-                for reason in ranked['reasoning']:
-                    st.markdown(f"• {reason}")
+            # Add risk score and issues display
+            if 'risk_score' in candidate and candidate['risk_score']:
+                st.markdown("**Risk Score:**")
+                st.markdown(f"⚠️ {candidate['risk_score']}")
+            
+            if 'issues' in candidate and candidate['issues']:
+                st.markdown("**Issues:**")
+                st.markdown(f"🚨 {candidate['issues']}")
+            
+            st.markdown("**Match Reasoning:**")
+            for reason in ranked['reasoning']:
+                st.markdown(f"• {reason}")
             
             # Add Generate Outreach button
             outreach_key = f"outreach_{candidate['id']}"
@@ -375,56 +373,53 @@ def format_candidate_response(candidates):
             if st.session_state[outreach_key]:
                 outreach_data = st.session_state[outreach_key]
                 
-                # Create a container for the outreach form
-                outreach_container = st.container()
-                with outreach_container:
-                    st.markdown("### 📝 Outreach Message")
-                    outreach_message = st.text_area(
-                        "Edit the message if needed:",
-                        value=outreach_data['outreach_message'],
-                        height=150,
-                        key=f"outreach_text_{candidate['id']}"
+                st.markdown("### 📝 Outreach Message")
+                outreach_message = st.text_area(
+                    "Edit the message if needed:",
+                    value=outreach_data['outreach_message'],
+                    height=150,
+                    key=f"outreach_text_{candidate['id']}"
+                )
+                
+                st.markdown("### ❓ Screening Questions")
+                questions = []
+                for i, question in enumerate(outreach_data['screening_questions'], 1):
+                    edited_question = st.text_input(
+                        f"Question {i}:",
+                        value=question,
+                        key=f"question_{candidate['id']}_{i}"
                     )
-                    
-                    st.markdown("### ❓ Screening Questions")
-                    questions = []
-                    for i, question in enumerate(outreach_data['screening_questions'], 1):
-                        edited_question = st.text_input(
-                            f"Question {i}:",
-                            value=question,
-                            key=f"question_{candidate['id']}_{i}"
-                        )
-                        questions.append(edited_question)
-                    
-                    # Add save button
-                    if st.button("💾 Save Draft", key=f"save_draft_{candidate['id']}"):
-                        try:
-                            # Get user ID from session
-                            user_response = supabase_client.auth.get_user()
-                            if not user_response.user:
-                                st.error("Please log in to save drafts")
-                                return
+                    questions.append(edited_question)
+                
+                # Add save button
+                if st.button("💾 Save Draft", key=f"save_draft_{candidate['id']}"):
+                    try:
+                        # Get user ID from session
+                        user_response = supabase_client.auth.get_user()
+                        if not user_response.user:
+                            st.error("Please log in to save drafts")
+                            return
+                        
+                        recruiter_id = user_response.user.id
+                        
+                        # Save to Supabase
+                        data = {
+                            'id': str(uuid.uuid4()),  # Add generated UUID
+                            'recruiter_id': recruiter_id,
+                            'candidate_id': candidate['id'],
+                            'outreach_message': outreach_message,
+                            'screening_questions': questions
+                        }
+                        
+                        response = supabase_client.table('recruiter_notes').insert(data).execute()
+                        
+                        if hasattr(response, 'error') and response.error:
+                            st.error(f"Error saving draft: {response.error}")
+                        else:
+                            st.success("Draft saved successfully!")
                             
-                            recruiter_id = user_response.user.id
-                            
-                            # Save to Supabase
-                            data = {
-                                'id': str(uuid.uuid4()),  # Add generated UUID
-                                'recruiter_id': recruiter_id,
-                                'candidate_id': candidate['id'],
-                                'outreach_message': outreach_message,
-                                'screening_questions': questions
-                            }
-                            
-                            response = supabase_client.table('recruiter_notes').insert(data).execute()
-                            
-                            if hasattr(response, 'error') and response.error:
-                                st.error(f"Error saving draft: {response.error}")
-                            else:
-                                st.success("Draft saved successfully!")
-                                
-                        except Exception as e:
-                            st.error(f"Error saving draft: {str(e)}")
+                    except Exception as e:
+                        st.error(f"Error saving draft: {str(e)}")
             
             # Add a button to view full profile
             if st.button("View Full Profile", key=f"view_profile_{candidate['id']}"):
@@ -566,9 +561,9 @@ def display_chat_history(sessions):
         st.info("No recent conversations found.")
         return
         
-    st.markdown("#### Last 5 Conversations")
+    # Create a list of all queries with their timestamps
+    all_queries = []
     for session_time, chats in sessions.items():
-        # Convert session time to a more readable format
         session_dt = datetime.strptime(session_time, '%Y-%m-%d %H:%M')
         time_ago = datetime.now(UTC) - session_dt.replace(tzinfo=UTC)
         
@@ -584,25 +579,38 @@ def display_chat_history(sessions):
         else:
             time_str = "just now"
             
-        with st.expander(f"🗨️ Session from {time_str}", expanded=True):
-            # Display each chat in the session
-            for chat in chats:
-                st.markdown("---")
-                st.markdown("**Question:**")
-                st.write(chat['question'])
-                st.markdown("**Answer:**")
-                st.write(chat['answer'])
-                
-                # Add a button to reuse the query
-                if st.button("Reuse this search", key=f"reuse_{chat['id']}"):
-                    st.session_state.last_query = chat['question']
-                    # Execute the search immediately
-                    with st.spinner("Searching for candidates..."):
-                        candidates, updated_filters = refine_search_candidates(chat['question'], None)
-                        st.session_state.search_results = candidates
-                        st.session_state.current_filters = updated_filters
-                        answer = format_candidate_response(candidates)
-                        st.rerun()
+        for chat in chats:
+            all_queries.append({
+                'question': chat['question'],
+                'time': time_str,
+                'answer': chat['answer']
+            })
+    
+    # Display the queries in an expander
+    with st.expander("🗨️ Last 5 Conversations", expanded=True):
+        if all_queries:
+            # Create radio options with timestamps
+            radio_options = [f"{q['question']} ({q['time']})" for q in all_queries]
+            selected_option = st.radio(
+                "Select a previous question to reuse:",
+                radio_options,
+                label_visibility="collapsed"
+            )
+            
+            # Get the selected query
+            selected_query = all_queries[radio_options.index(selected_option)]['question']
+            
+            # Show preview of the selected query's results
+            st.markdown("**Preview of previous results:**")
+            st.write(all_queries[radio_options.index(selected_option)]['answer'])
+            
+            # Add a prominent reuse button
+            if st.button("🔄 Run This Search", use_container_width=True):
+                st.session_state.last_query = selected_query
+                st.session_state.trigger_search = True
+                st.rerun()
+        else:
+            st.info("No previous conversations found.")
 
 def main():
     st.set_page_config(
@@ -639,26 +647,25 @@ def main():
             value=st.session_state.last_query if st.session_state.last_query else ""
         )
 
-        if st.button("Ask"):
+        # Unified search trigger logic
+        triggered = st.button("Ask") or st.session_state.get("trigger_search", False)
+
+        if triggered:
             if question:
                 with st.spinner("Searching for candidates..."):
-                    # Search for candidates with context
                     candidates, updated_filters = refine_search_candidates(question, st.session_state.current_filters)
                     st.session_state.search_results = candidates
                     st.session_state.last_query = question
                     st.session_state.current_filters = updated_filters
                     answer = format_candidate_response(candidates)
-                    
-                    # Save to chat history
                     save_chat_message(question, answer)
-                    
-                    # Update session state
                     st.session_state.chat_history.insert(0, {
                         'question': question,
                         'answer': answer,
                         'timestamp': datetime.now(UTC).isoformat()
                     })
-                    st.rerun()  # Rerun to update the filters display
+                    st.session_state.trigger_search = False  # Reset flag
+                    st.rerun()
             else:
                 st.warning("Please enter a question")
 
@@ -695,6 +702,7 @@ def main():
         st.session_state.search_results = None
         st.session_state.last_query = None
         st.session_state.current_filters = None
+        st.session_state.trigger_search = False
         st.switch_page("login.py")
 
 if __name__ == "__main__":
