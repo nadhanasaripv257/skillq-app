@@ -399,4 +399,17 @@ Format the response as JSON with two fields:
                         f"How has your background in {', '.join(candidate['skills'][:2])} prepared you for this role?",
                         "What are your expectations regarding career growth in this position?"
                     ]
-                } 
+                }
+
+    def generate_text(self, prompt: str) -> str:
+        """Generate a keyword-rich string using the provided prompt."""
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error generating text: {str(e)}", exc_info=True)
+            raise Exception(f"Error generating text: {str(e)}") 

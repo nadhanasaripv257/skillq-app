@@ -222,12 +222,23 @@ class ResumeProcessor:
             logger.debug(f"Calculated risk score: {risk_score}")
             logger.debug(f"Identified issues: {json.dumps(issues, indent=2)}")
             
+            # Generate search_blob using LLM
+            search_blob_prompt = f"Given the candidate's resume data — including job titles, work experience, skills, tools, technologies, and education — generate a flat list of only relevant and related keywords. Include direct skills, tools, technologies, known synonyms, and similar job titles (e.g., for 'Customer Support', include 'Help Desk', 'Client Coordinator', 'Customer Coordinator'). Return only the keywords in lowercase, separated by a pipe (|). No extra text. No duplicates. Example: customer support|help desk|client coordinator|zendesk|crm|ticketing system|communication skills.\n\nCandidate Details:\n" + \
+                                f"Current Role: {parsed_data['work_experience']['current_or_last_job_title']}\n" + \
+                                f"Previous Roles: {', '.join(parsed_data['work_experience']['previous_job_titles'])}\n" + \
+                                f"Skills: {', '.join(parsed_data['skills_and_tools']['skills'])}\n" + \
+                                f"Tools: {', '.join(parsed_data['skills_and_tools']['tools_technologies'])}\n" + \
+                                f"Experience: {parsed_data['work_experience']['total_years_experience']} years"
+            search_blob = self.openai.generate_text(search_blob_prompt)
+            logger.debug(f"Generated search_blob: {search_blob}")
+            
             # Store data in Supabase
             data = {
                 'file_url': f"https://{self.supabase.project_ref}.supabase.co/storage/v1/object/public/resumes/{file_name}",
                 'parsed_data': parsed_data,
                 'risk_score': risk_score,
-                'issues': issues
+                'issues': issues,
+                'search_blob': search_blob
             }
             
             logger.debug(f"Prepared data for storage: {json.dumps(data, indent=2)}")
