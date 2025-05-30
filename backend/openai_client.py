@@ -265,20 +265,23 @@ class OpenAIClient:
 
 Evaluate this candidate profile:
 
+- ID: {candidate['id']}
 - Name: {candidate['full_name']}
 - Title: {candidate['current_or_last_job_title']}
+- Summary: {candidate.get('summary_statement', 'Not provided')}
 - Experience: {candidate['total_years_experience']} years
-- Skills: {', '.join(candidate['skills'])}
+- Skills: {candidate.get('search_blob', ', '.join(candidate['skills']))}
 - Location: {candidate['location']}
 - Education: {', '.join(candidate.get('education', ['Not provided']))}
+- Risk Score: {candidate.get('risk_score', 'Not provided')}
+- Issues: {candidate.get('issues', 'Not provided')}
 
-Give a relevance score from 0–10 and list 2–3 short bullet points explaining your reasoning.
+Give a relevance score from 0–10 and list exactly 2 short bullet points explaining your reasoning.
 Format your response as:
 Score: [number]
 Reasoning:
 - [bullet point 1]
-- [bullet point 2]
-- [bullet point 3]"""
+- [bullet point 2]"""
 
                 # Get response from OpenAI
                 response = self.client.chat.completions.create(

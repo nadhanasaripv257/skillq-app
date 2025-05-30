@@ -187,7 +187,7 @@ def refine_search_candidates(query, current_filters):
         if matched_ids:
             for candidate_id in matched_ids:
                 response = supabase_client.table('resumes')\
-                    .select('id, full_name, location, total_years_experience, current_or_last_job_title, skills, search_blob')\
+                    .select('id, full_name, location, total_years_experience, current_or_last_job_title, skills, search_blob, risk_score, issues')\
                     .eq('id', candidate_id)\
                     .execute()
                 if response.data:
@@ -301,6 +301,15 @@ def format_candidate_response(candidates):
                 if 'education' in candidate and candidate['education']:
                     st.markdown("**Education:**")
                     st.markdown(", ".join(candidate['education']))
+                
+                # Add risk score and issues display
+                if 'risk_score' in candidate and candidate['risk_score']:
+                    st.markdown("**Risk Score:**")
+                    st.markdown(f"⚠️ {candidate['risk_score']}")
+                
+                if 'issues' in candidate and candidate['issues']:
+                    st.markdown("**Issues:**")
+                    st.markdown(f"🚨 {candidate['issues']}")
             
             with col2:
                 st.markdown("**Match Reasoning:**")
