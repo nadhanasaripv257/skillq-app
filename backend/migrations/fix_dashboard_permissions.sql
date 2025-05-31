@@ -10,13 +10,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authentic
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated;
 
--- Grant specific permissions for the dashboard metrics view and its refresh function
-GRANT EXECUTE ON FUNCTION refresh_dashboard_metrics() TO authenticated;
-GRANT TRIGGER ON resumes TO authenticated;
-
--- Ensure the materialized view is owned by postgres
-ALTER MATERIALIZED VIEW dashboard_metrics OWNER TO postgres;
-
--- Grant permissions on the resumes table specifically
+-- Grant permissions on the resumes and resumes_pii tables
 GRANT ALL ON resumes TO authenticated;
-GRANT ALL ON resumes TO public; 
+GRANT ALL ON resumes_pii TO authenticated;
+
+-- Grant permissions on the dashboard view
+GRANT SELECT ON dashboard_metrics TO authenticated; 

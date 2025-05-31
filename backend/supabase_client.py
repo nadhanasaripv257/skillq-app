@@ -97,10 +97,7 @@ class SupabaseClient:
                 'file_type': 'pdf',
                 'file_path': data.get('file_url'),
                 
-                # Personal Information - store anonymized values
-                'full_name': '[NAME]',
-                'email': '[EMAIL]',
-                'phone': '[PHONE]',
+                # Personal Information - store only non-PII data
                 'location': personal_info.get('location'),  # City only
                 'state': personal_info.get('state'),        # State
                 'country': personal_info.get('country'),    # Country
@@ -132,7 +129,7 @@ class SupabaseClient:
                 'risk_score': data.get('risk_score', 0),
                 'issues': data.get('issues', []),
                 
-                # Raw and Processed Data - store only parsed_data, remove pii field
+                # Raw and Processed Data
                 'parsed_data': parsed_data,
                 
                 # Metadata
@@ -141,7 +138,7 @@ class SupabaseClient:
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'updated_at': datetime.now(timezone.utc).isoformat(),
                 
-                # New field for search_blob
+                # Search blob
                 'search_blob': data.get('search_blob', '')
             }
             
@@ -149,27 +146,15 @@ class SupabaseClient:
             
             # Insert data into resumes table
             logger.debug("Inserting data into resumes table")
-            try:
-                result = self.client.table('resumes').insert(resume_data).execute()
-                
-                if not result.data:
-                    logger.error("Failed to store resume data - no data returned from insert")
-                    raise Exception("Failed to store resume data")
-                
-                logger.info(f"Successfully stored resume data with ID: {resume_data['id']}")
-                logger.debug(f"Stored data: {json.dumps(result.data[0], indent=2)}")
-                return result.data[0]
-            except Exception as insert_error:
-                # Check if it's a materialized view permission error
-                if isinstance(insert_error, Exception) and 'must be owner of materialized view dashboard_metrics' in str(insert_error):
-                    logger.warning("Materialized view permission error - proceeding with insert anyway")
-                    # Try to insert without the trigger
-                    result = self.client.table('resumes').insert(resume_data).execute()
-                    if not result.data:
-                        raise Exception("Failed to store resume data")
-                    return result.data[0]
-                else:
-                    raise
+            result = self.client.table('resumes').insert(resume_data).execute()
+            
+            if not result.data:
+                logger.error("Failed to store resume data - no data returned from insert")
+                raise Exception("Failed to store resume data")
+            
+            logger.info(f"Successfully stored resume data with ID: {resume_data['id']}")
+            logger.debug(f"Stored data: {json.dumps(result.data[0], indent=2)}")
+            return result.data[0]
             
         except Exception as e:
             logger.error(f"Error storing resume data: {str(e)}", exc_info=True)
