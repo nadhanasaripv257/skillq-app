@@ -619,6 +619,14 @@ def main():
         layout="wide"
     )
     
+    # Reset on entry unless coming from rerun
+    if st.session_state.get("page_initialized") is not True:
+        st.session_state.search_results = None
+        st.session_state.last_query = None
+        st.session_state.current_filters = None
+        st.session_state.trigger_search = False
+        st.session_state.page_initialized = True
+    
     initialize_session_state()
     
     # Check if user is authenticated
@@ -630,7 +638,16 @@ def main():
 
     # Add back button at the top
     if st.button("← Back to Home"):
+        st.session_state.page_initialized = False
         st.switch_page("pages/home.py")
+
+    # Add reset button
+    if st.button("🧹 Reset Chat Session"):
+        st.session_state.search_results = None
+        st.session_state.last_query = None
+        st.session_state.current_filters = None
+        st.session_state.trigger_search = False
+        st.rerun()
 
     # Create two columns for layout
     col1, col2 = st.columns([2, 1])
