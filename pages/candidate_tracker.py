@@ -54,7 +54,7 @@ def get_contacted_candidates(recruiter_id, refresh_key=None, filter_date=None):
         
         # Base query for data
         query = supabase.table('recruiter_notes')\
-            .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
+            .select('*, resumes!inner(current_or_last_job_title, location, resumes_pii!inner(full_name, email, phone))')\
             .eq('recruiter_id', recruiter_id)\
             .eq('contact_status', True)
         
@@ -168,6 +168,7 @@ def main():
     table_data = []
     for candidate in candidates:
         resume = candidate['resumes']
+        pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
         
         # Handle follow-up date
         follow_up_date = None
@@ -176,17 +177,16 @@ def main():
                 # Parse the ISO format date from Supabase
                 follow_up_date = pd.to_datetime(candidate['follow_up_date']).date()
             except (ValueError, TypeError) as e:
-                st.error(f"Error parsing follow-up date for {resume['full_name']}: {str(e)}")
+                st.error(f"Error parsing follow-up date for {pii_data.get('full_name', 'Unknown')}: {str(e)}")
                 follow_up_date = None
             
         table_data.append({
             'Select': False,  # Initialize as False
-            'Candidate Name': resume['full_name'],
-            'Current Role': resume['current_or_last_job_title'],
-            'Location': resume['location'],
-            'Email': resume.get('email', 'N/A'),
-            'Phone': resume.get('phone', 'N/A'),
-            'LinkedIn': resume.get('linkedin_url', 'N/A'),
+            'Candidate Name': pii_data.get('full_name', 'N/A'),
+            'Current Role': resume.get('current_or_last_job_title', 'N/A'),
+            'Location': resume.get('location', 'N/A'),
+            'Email': pii_data.get('email', 'N/A'),
+            'Phone': pii_data.get('phone', 'N/A'),
             'Follow-up Required': candidate.get('follow_up_required', False),
             'Follow-up Date': follow_up_date,
             'Last Contact': format_timestamp(candidate.get('updated_at', candidate['created_at']))
@@ -225,7 +225,7 @@ def main():
                 step=1
             )
         },
-        disabled=["Candidate Name", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Contact"]
+        disabled=["Candidate Name", "Current Role", "Location", "Email", "Phone"]
     )
 
     # Add view button below the table
@@ -319,25 +319,24 @@ def main():
     # Display selected candidate details at the top first
     if st.session_state.selected_candidate:
         selected_candidate_obj = next(
-            (c for c in candidates if c['resumes']['full_name'].lower().replace(' ', '-') == st.session_state.selected_candidate),
+            (c for c in candidates if c['resumes']['resumes_pii'][0]['full_name'].lower().replace(' ', '-') == st.session_state.selected_candidate),
             None
         )
         if selected_candidate_obj:
             resume = selected_candidate_obj['resumes']
+            pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
             st.subheader("📝 Selected Candidate Details")
-            with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
+            with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=True):
                 # Candidate summary
                 st.markdown("#### Candidate Summary")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown(f"**Name:** {resume['full_name']}")
-                    st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
-                    st.markdown(f"**Location:** {resume['location']}")
+                    st.markdown(f"**Name:** {pii_data.get('full_name', 'N/A')}")
+                    st.markdown(f"**Current Role:** {resume.get('current_or_last_job_title', 'N/A')}")
+                    st.markdown(f"**Location:** {resume.get('location', 'N/A')}")
                 with col2:
-                    st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
-                    st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
-                    if resume.get('linkedin_url'):
-                        st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
+                    st.markdown(f"**Email:** {pii_data.get('email', 'N/A')}")
+                    st.markdown(f"**Phone:** {pii_data.get('phone', 'N/A')}")
                 
                 # Last outreach message
                 st.markdown("#### Last Outreach Message")
@@ -401,24 +400,23 @@ def main():
 
     # Display remaining candidates
     for candidate in candidates:
-        anchor_id = candidate['resumes']['full_name'].lower().replace(' ', '-')
+        resume = candidate['resumes']
+        pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
+        anchor_id = pii_data.get('full_name', '').lower().replace(' ', '-')
         if anchor_id == st.session_state.selected_candidate:
             continue  # Already shown above
 
-        resume = candidate['resumes']
-        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=False):
+        with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=False):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown(f"**Name:** {resume['full_name']}")
-                st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
-                st.markdown(f"**Location:** {resume['location']}")
+                st.markdown(f"**Name:** {pii_data.get('full_name', 'N/A')}")
+                st.markdown(f"**Current Role:** {resume.get('current_or_last_job_title', 'N/A')}")
+                st.markdown(f"**Location:** {resume.get('location', 'N/A')}")
             with col2:
-                st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
-                st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
-                if resume.get('linkedin_url'):
-                    st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
+                st.markdown(f"**Email:** {pii_data.get('email', 'N/A')}")
+                st.markdown(f"**Phone:** {pii_data.get('phone', 'N/A')}")
             
             # Last outreach message
             st.markdown("#### Last Outreach Message")

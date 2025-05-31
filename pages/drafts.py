@@ -39,9 +39,9 @@ def get_drafts(recruiter_id, page=1, per_page=5, refresh_key=None):
         # Calculate offset
         offset = (page - 1) * per_page
         
-        # Get drafts with their details
+        # Get drafts with their details, joining with resumes_pii for PII data
         response = supabase.table('recruiter_notes')\
-            .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
+            .select('*, resumes!inner(current_or_last_job_title, location, resumes_pii!inner(full_name, email, phone))')\
             .eq('recruiter_id', recruiter_id)\
             .eq('contact_status', False)\
             .order('created_at', desc=True)\
@@ -174,8 +174,9 @@ def main():
     table_data = []
     for draft in drafts:
         resume = draft['resumes']
+        pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
         # Create a unique anchor ID for each draft
-        anchor_id = resume['full_name'].lower().replace(' ', '-')
+        anchor_id = pii_data.get('full_name', '').lower().replace(' ', '-')
         try:
             follow_up_date = pd.to_datetime(draft.get('follow_up_date')).date() if draft.get('follow_up_date') else None
         except (ValueError, TypeError):
@@ -183,12 +184,11 @@ def main():
             
         table_data.append({
             'Select': False,  # Initialize as False
-            'Candidate Name': resume['full_name'],
-            'Current Role': resume['current_or_last_job_title'],
-            'Location': resume['location'],
-            'Email': resume.get('email', 'N/A'),
-            'Phone': resume.get('phone', 'N/A'),
-            'LinkedIn': resume.get('linkedin_url', 'N/A'),
+            'Candidate Name': pii_data.get('full_name', 'N/A'),
+            'Current Role': resume.get('current_or_last_job_title', 'N/A'),
+            'Location': resume.get('location', 'N/A'),
+            'Email': pii_data.get('email', 'N/A'),
+            'Phone': pii_data.get('phone', 'N/A'),
             'Contacted': draft.get('contact_status', False),
             'Follow-up Required': draft.get('follow_up_required', False),
             'Follow-up Date': follow_up_date,
@@ -241,11 +241,6 @@ def main():
                 help="Candidate's phone",
                 disabled=True
             ),
-            "LinkedIn": st.column_config.TextColumn(
-                "LinkedIn",
-                help="Candidate's LinkedIn URL",
-                disabled=True
-            ),
             "Contacted": st.column_config.CheckboxColumn(
                 "Contacted",
                 help="Check if you have contacted this candidate",
@@ -265,7 +260,7 @@ def main():
                 step=1
             )
         },
-        disabled=["Candidate Name", "Current Role", "Location", "Email", "Phone", "LinkedIn", "Last Updated"]
+        disabled=["Candidate Name", "Current Role", "Location", "Email", "Phone", "Last Updated"]
     )
 
     # Add view button below the table
@@ -356,25 +351,24 @@ def main():
     # Display selected candidate details at the top first
     if st.session_state.selected_draft:
         selected_draft_obj = next(
-            (d for d in drafts if d['resumes']['full_name'].lower().replace(' ', '-') == st.session_state.selected_draft),
+            (d for d in drafts if d['resumes']['resumes_pii'][0]['full_name'].lower().replace(' ', '-') == st.session_state.selected_draft),
             None
         )
         if selected_draft_obj:
             resume = selected_draft_obj['resumes']
+            pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
             st.subheader("📝 Selected Draft Details")
-            with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
+            with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=True):
                 # Candidate summary
                 st.markdown("#### Candidate Summary")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown(f"**Name:** {resume['full_name']}")
-                    st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
-                    st.markdown(f"**Location:** {resume['location']}")
+                    st.markdown(f"**Name:** {pii_data.get('full_name', 'N/A')}")
+                    st.markdown(f"**Current Role:** {resume.get('current_or_last_job_title', 'N/A')}")
+                    st.markdown(f"**Location:** {resume.get('location', 'N/A')}")
                 with col2:
-                    st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
-                    st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
-                    if resume.get('linkedin_url'):
-                        st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
+                    st.markdown(f"**Email:** {pii_data.get('email', 'N/A')}")
+                    st.markdown(f"**Phone:** {pii_data.get('phone', 'N/A')}")
                 
                 # Outreach message
                 st.markdown("#### Outreach Message")
@@ -494,24 +488,23 @@ def main():
 
     # Display remaining drafts
     for draft in drafts:
-        anchor_id = draft['resumes']['full_name'].lower().replace(' ', '-')
+        resume = draft['resumes']
+        pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
+        anchor_id = pii_data.get('full_name', '').lower().replace(' ', '-')
         if anchor_id == st.session_state.selected_draft:
             continue  # Already shown above
 
-        resume = draft['resumes']
-        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=False):
+        with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=False):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown(f"**Name:** {resume['full_name']}")
-                st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
-                st.markdown(f"**Location:** {resume['location']}")
+                st.markdown(f"**Name:** {pii_data.get('full_name', 'N/A')}")
+                st.markdown(f"**Current Role:** {resume.get('current_or_last_job_title', 'N/A')}")
+                st.markdown(f"**Location:** {resume.get('location', 'N/A')}")
             with col2:
-                st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
-                st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
-                if resume.get('linkedin_url'):
-                    st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
+                st.markdown(f"**Email:** {pii_data.get('email', 'N/A')}")
+                st.markdown(f"**Phone:** {pii_data.get('phone', 'N/A')}")
             
             # Outreach message
             st.markdown("#### Outreach Message")
