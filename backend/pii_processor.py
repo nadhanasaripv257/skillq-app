@@ -43,6 +43,14 @@ class PIIProcessor:
                 'bitbucket', 'jira', 'confluence', 'slack', 'teams', 'zoom', 'skype'
             }
             
+            # Patterns for detailed address detection
+            self.address_patterns = [
+                r'\b\d+\s+[A-Za-z\s]+(?:Street|St|Road|Rd|Avenue|Ave|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way|Place|Pl)\b',
+                r'\b(?:Apt|Apartment|Unit|Suite|Ste|Floor|Fl|#)\s*[A-Za-z0-9-]+\b',
+                r'\b(?:PO Box|P.O. Box|P.O Box|Post Office Box)\s+[A-Za-z0-9-]+\b',
+                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'  # Email pattern
+            ]
+            
             logger.info("PII processor initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing PII processor: {str(e)}")
@@ -79,6 +87,50 @@ class PIIProcessor:
             
         return True
 
+    def is_detailed_address(self, text: str) -> bool:
+        """
+        Check if the text contains a detailed address that should be masked
+        
+        Args:
+            text: The text to check
+            
+        Returns:
+            bool: True if the text contains a detailed address, False otherwise
+        """
+        # Check for any of the address patterns
+        for pattern in self.address_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    def extract_location_components(self, text: str) -> Dict[str, str]:
+        """
+        Extract city, state, and country from location text
+        
+        Args:
+            text: The location text to parse
+            
+        Returns:
+            Dict containing city, state, and country
+        """
+        location = {
+            'city': None,
+            'state': None,
+            'country': 'Australia'  # Default country
+        }
+        
+        # Split by common separators
+        parts = [part.strip() for part in re.split(r'[,;]', text)]
+        
+        if len(parts) >= 1:
+            location['city'] = parts[0]
+        if len(parts) >= 2:
+            location['state'] = parts[1]
+        if len(parts) >= 3:
+            location['country'] = parts[2]
+            
+        return location
+
     def extract_pii(self, text: str) -> Dict:
         """
         Extract PII information from text using Presidio
@@ -101,7 +153,12 @@ class PIIProcessor:
                 'full_name': None,
                 'email': None,
                 'phone': None,
-                'address': None
+                'address': None,
+                'location': {
+                    'city': None,
+                    'state': None,
+                    'country': 'Australia'
+                }
             }
             
             # Process results
@@ -118,7 +175,12 @@ class PIIProcessor:
                 elif entity_type == "PHONE_NUMBER":
                     pii_data['phone'] = value
                 elif entity_type == "LOCATION":
-                    pii_data['address'] = value
+                    if self.is_detailed_address(value):
+                        pii_data['address'] = value
+                    else:
+                        # Extract location components for non-detailed addresses
+                        location_components = self.extract_location_components(value)
+                        pii_data['location'].update(location_components)
             
             # Use the most likely name (usually the first one in the document)
             if detected_names:
@@ -133,7 +195,12 @@ class PIIProcessor:
                 'full_name': None,
                 'email': None,
                 'phone': None,
-                'address': None
+                'address': None,
+                'location': {
+                    'city': None,
+                    'state': None,
+                    'country': 'Australia'
+                }
             }
 
     def anonymize_text(self, text: str) -> Tuple[str, Dict]:
@@ -172,5 +239,10 @@ class PIIProcessor:
                 'full_name': None,
                 'email': None,
                 'phone': None,
-                'address': None
+                'address': None,
+                'location': {
+                    'city': None,
+                    'state': None,
+                    'country': 'Australia'
+                }
             } 
