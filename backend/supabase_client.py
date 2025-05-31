@@ -97,10 +97,10 @@ class SupabaseClient:
                 'file_type': 'pdf',
                 'file_path': data.get('file_url'),
                 
-                # Personal Information - store directly in respective columns
-                'full_name': personal_info.get('full_name'),
-                'email': personal_info.get('email'),
-                'phone': personal_info.get('phone'),
+                # Personal Information - store anonymized values
+                'full_name': '[NAME]',
+                'email': '[EMAIL]',
+                'phone': '[PHONE]',
                 'location': personal_info.get('location'),  # City only
                 'state': personal_info.get('state'),        # State
                 'country': personal_info.get('country'),    # Country
@@ -306,4 +306,31 @@ class SupabaseClient:
 
         except Exception as e:
             logger.error(f"Error retrieving cached outreach: {str(e)}")
-            return None 
+            return None
+
+    def store_pii_data(self, resume_id: str, pii_data: Dict) -> Dict:
+        """Store PII data in the resumes_pii table"""
+        try:
+            logger.info(f"Storing PII data for resume {resume_id}")
+            logger.debug(f"PII data: {json.dumps(pii_data, indent=2)}")
+            
+            # Prepare data for storage
+            pii_record = {
+                'resume_id': resume_id,
+                'full_name': pii_data.get('full_name'),
+                'email': pii_data.get('email'),
+                'phone': pii_data.get('phone'),
+                'address': pii_data.get('address'),
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Insert data into resumes_pii table
+            result = self.client.table('resumes_pii').insert(pii_record).execute()
+            
+            logger.info(f"Successfully stored PII data for resume {resume_id}")
+            return result.data[0] if result.data else None
+            
+        except Exception as e:
+            logger.error(f"Error storing PII data: {str(e)}")
+            raise 

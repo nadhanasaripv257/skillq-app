@@ -3,6 +3,7 @@ from openai import OpenAI
 from typing import Dict, List
 import json
 import time
+import uuid
 
 class OpenAIClient:
     def __init__(self):
@@ -14,90 +15,85 @@ class OpenAIClient:
     def parse_resume(self, resume_text: str) -> Dict:
         """
         Parse resume text using OpenAI API to extract key information
+        
+        Args:
+            resume_text: The anonymized resume text to parse
+            
+        Returns:
+            Dict containing structured resume information
         """
         try:
-            prompt = """
-            Extract the following information from the resume text. If any information is not present, set it to null:
+            # Create the input for OpenAI
+            input_data = {
+                "id": str(uuid.uuid4()),
+                "resume_text": resume_text,
+                "prompt": """Extract the following information from the resume text. If any information is not present, set it to null:
 
-            Personal Information:
-            - full_name: The candidate's full name (if present)
-            - email: The candidate's email address (if present)
-            - phone: The candidate's phone number (if present)
-            - location: The city, state, and country in format "City, State, Country" (e.g., "Sydney, NSW, Australia" or "Melbourne, VIC, Australia")
-            - linkedin_url: LinkedIn profile link if available
+Personal Information:
+- location: The city, state, and country in format "City, State, Country" (e.g., "Sydney, NSW, Australia")
+- linkedin_url: LinkedIn profile link if available
 
-            Work Experience:
-            - total_years_experience: A rough estimate of how many years of work experience the candidate has
-            - current_or_last_job_title: Most recent or current job title
-            - previous_job_titles: List of previous job titles held
-            - companies_worked_at: List of companies the candidate has worked at
-            - employment_type: Full-time / Contract / Freelance / Internship (if mentioned)
-            - availability: "Available now" / "Notice period" / "Unavailable" (if mentioned)
+Work Experience:
+- total_years_experience: A rough estimate of how many years of work experience the candidate has
+- current_or_last_job_title: Most recent or current job title
+- previous_job_titles: List of previous job titles held
+- companies_worked_at: List of companies the candidate has worked at
+- employment_type: Full-time / Contract / Freelance / Internship (if mentioned)
+- availability: "Available now" / "Notice period" / "Unavailable" (if mentioned)
 
-            Skills and Tools:
-            - skills: List of relevant skills (limit to 10 if very long)
-            - skill_categories: Categorized version of the skills (e.g., Soft Skills, Tech Tools, Coordination)
-            - tools_technologies: List of specific software or tools mentioned (e.g., Salesforce, Excel)
+Skills and Tools:
+- skills: List of relevant skills (limit to 10 if very long)
+- skill_categories: Categorized version of the skills (e.g., Soft Skills, Tech Tools, Coordination)
+- tools_technologies: List of specific software or tools mentioned (e.g., Salesforce, Excel)
 
-            Education and Certifications:
-            - education: Full degree names and institutions
-            - degree_level: Bachelors / Masters / Diploma / Certificate
-            - certifications: Any relevant certifications (e.g., ITIL, PMP)
+Education and Certifications:
+- education: Full degree names and institutions
+- degree_level: Bachelors / Masters / Diploma / Certificate
+- certifications: Any relevant certifications (e.g., ITIL, PMP)
 
-            Additional Information:
-            - summary_statement: A brief professional summary from the resume (if available)
-            - languages_spoken: List of any languages mentioned
+Additional Information:
+- summary_statement: A brief professional summary from the resume (if available)
+- languages_spoken: List of any languages mentioned
 
-            Format the response as a JSON object with the following structure:
-            {
-                "personal_info": {
-                    "full_name": "string or null",
-                    "email": "string or null",
-                    "phone": "string or null",
-                    "location": "string or null",
-                    "linkedin_url": "string or null"
-                },
-                "work_experience": {
-                    "total_years_experience": "number or null",
-                    "current_or_last_job_title": "string or null",
-                    "previous_job_titles": ["string"],
-                    "companies_worked_at": ["string"],
-                    "employment_type": "string or null",
-                    "availability": "string or null"
-                },
-                "skills_and_tools": {
-                    "skills": ["string"],
-                    "skill_categories": {
-                        "category_name": ["skill1", "skill2"]
-                    },
-                    "tools_technologies": ["string"]
-                },
-                "education_and_certifications": {
-                    "education": ["string"],
-                    "degree_level": ["string"],
-                    "certifications": ["string"]
-                },
-                "additional_info": {
-                    "summary_statement": "string or null",
-                    "languages_spoken": ["string"]
-                }
+Format the response as a JSON object with the following structure:
+{
+    "personal_info": {
+        "location": "string or null",
+        "linkedin_url": "string or null"
+    },
+    "work_experience": {
+        "total_years_experience": "number or null",
+        "current_or_last_job_title": "string or null",
+        "previous_job_titles": ["string"],
+        "companies_worked_at": ["string"],
+        "employment_type": "string or null",
+        "availability": "string or null"
+    },
+    "skills_and_tools": {
+        "skills": ["string"],
+        "skill_categories": {
+            "category_name": ["skill1", "skill2"]
+        },
+        "tools_technologies": ["string"]
+    },
+    "education_and_certifications": {
+        "education": ["string"],
+        "degree_level": ["string"],
+        "certifications": ["string"]
+    },
+    "additional_info": {
+        "summary_statement": "string or null",
+        "languages_spoken": ["string"]
+    }
+}"""
             }
 
-            Important:
-            1. Always return the complete structure with all fields, even if they are null or empty arrays
-            2. For arrays, return an empty array [] if no items found, not null
-            3. For objects, return an empty object {} if no data found, not null
-            4. For numbers, return 0 if not found, not null
-            5. For strings, return null if not found
-            6. For location, always use the format "City, State, Country" with proper capitalization and state abbreviations (e.g., "Sydney, NSW, Australia", "Melbourne, VIC, Australia")
-            7. If country is not specified in the resume, default to "Australia"
-            """
-
+            # Call OpenAI API
             response = self.client.chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
                     {"role": "system", "content": "You are a resume parsing assistant. Extract structured information from resume text. Be precise and accurate in your extraction. Always return the complete data structure with all fields."},
-                    {"role": "user", "content": f"{prompt}\n\nResume text:\n{resume_text}"}
+                    {"role": "user", "content": f"{input_data['prompt']}\n\nResume text:\n{input_data['resume_text']}"}
                 ],
                 response_format={ "type": "json_object" }
             )
@@ -108,9 +104,6 @@ class OpenAIClient:
             # Ensure all required fields are present with proper defaults
             default_structure = {
                 "personal_info": {
-                    "full_name": None,
-                    "email": None,
-                    "phone": None,
                     "location": None,
                     "linkedin_url": None
                 },
@@ -138,53 +131,20 @@ class OpenAIClient:
                 }
             }
             
-            # Merge the parsed data with defaults
-            for section in default_structure:
+            # Merge parsed data with defaults
+            for section, fields in default_structure.items():
                 if section not in parsed_data:
-                    parsed_data[section] = default_structure[section]
+                    parsed_data[section] = fields
                 else:
-                    for field, default_value in default_structure[section].items():
+                    for field, default_value in fields.items():
                         if field not in parsed_data[section]:
-                            parsed_data[section][field] = default_value
-                        elif parsed_data[section][field] is None:
                             parsed_data[section][field] = default_value
             
             return parsed_data
-
+            
         except Exception as e:
             logger.error(f"Error parsing resume with OpenAI: {str(e)}")
-            # Return default structure on error
-            return {
-                "personal_info": {
-                    "full_name": None,
-                    "email": None,
-                    "phone": None,
-                    "location": None,
-                    "linkedin_url": None
-                },
-                "work_experience": {
-                    "total_years_experience": 0,
-                    "current_or_last_job_title": None,
-                    "previous_job_titles": [],
-                    "companies_worked_at": [],
-                    "employment_type": None,
-                    "availability": None
-                },
-                "skills_and_tools": {
-                    "skills": [],
-                    "skill_categories": {},
-                    "tools_technologies": []
-                },
-                "education_and_certifications": {
-                    "education": [],
-                    "degree_level": [],
-                    "certifications": []
-                },
-                "additional_info": {
-                    "summary_statement": None,
-                    "languages_spoken": []
-                }
-            }
+            raise
 
     def extract_query_filters(self, query: str) -> Dict:
         """

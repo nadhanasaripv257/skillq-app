@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 from backend.supabase_client import SupabaseClient
 from backend.openai_client import OpenAIClient
+from backend.pii_processor import PIIProcessor
 from PyPDF2 import PdfReader
 from backend.resume_parser import ResumeParser
 from functools import lru_cache
@@ -11,6 +12,8 @@ from io import BytesIO
 import tempfile
 import logging
 import json
+import docx2txt
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,7 @@ class ResumeProcessor:
         self.supabase = SupabaseClient()
         self.openai = OpenAIClient()
         self.parser = ResumeParser()
+        self.pii_processor = PIIProcessor()
         self._cache = {}
 
     @lru_cache(maxsize=1000)
@@ -176,12 +180,80 @@ class ResumeProcessor:
         try:
             logger.info(f"Processing resume content for file: {file_name}")
             
-            # Parse resume using ResumeParser
-            pii_data, sanitized_content = self.parser.process_resume(file_content, file_name)
+            # Extract text from file
+            text = self.extract_text_from_file(file_content, file_name)
+            
+            # Extract and anonymize PII
+            anonymized_text, pii_data = self.pii_processor.anonymize_text(text)
             logger.debug(f"Extracted PII data: {json.dumps(pii_data, indent=2)}")
             
-            # Parse resume using OpenAI
-            structured_data = self.openai.parse_resume(sanitized_content)
+            # Prepare anonymized content for LLM
+            llm_input = {
+                "id": str(uuid.uuid4()),
+                "resume_text": anonymized_text,
+                "prompt": """Extract the following information from the resume text. If any information is not present, set it to null:
+
+Personal Information:
+- location: The city, state, and country in format "City, State, Country" (e.g., "Sydney, NSW, Australia")
+- linkedin_url: LinkedIn profile link if available
+
+Work Experience:
+- total_years_experience: A rough estimate of how many years of work experience the candidate has
+- current_or_last_job_title: Most recent or current job title
+- previous_job_titles: List of previous job titles held
+- companies_worked_at: List of companies the candidate has worked at
+- employment_type: Full-time / Contract / Freelance / Internship (if mentioned)
+- availability: "Available now" / "Notice period" / "Unavailable" (if mentioned)
+
+Skills and Tools:
+- skills: List of relevant skills (limit to 10 if very long)
+- skill_categories: Categorized version of the skills (e.g., Soft Skills, Tech Tools, Coordination)
+- tools_technologies: List of specific software or tools mentioned (e.g., Salesforce, Excel)
+
+Education and Certifications:
+- education: Full degree names and institutions
+- degree_level: Bachelors / Masters / Diploma / Certificate
+- certifications: Any relevant certifications (e.g., ITIL, PMP)
+
+Additional Information:
+- summary_statement: A brief professional summary from the resume (if available)
+- languages_spoken: List of any languages mentioned
+
+Format the response as a JSON object with the following structure:
+{
+    "personal_info": {
+        "location": "string or null",
+        "linkedin_url": "string or null"
+    },
+    "work_experience": {
+        "total_years_experience": "number or null",
+        "current_or_last_job_title": "string or null",
+        "previous_job_titles": ["string"],
+        "companies_worked_at": ["string"],
+        "employment_type": "string or null",
+        "availability": "string or null"
+    },
+    "skills_and_tools": {
+        "skills": ["string"],
+        "skill_categories": {
+            "category_name": ["skill1", "skill2"]
+        },
+        "tools_technologies": ["string"]
+    },
+    "education_and_certifications": {
+        "education": ["string"],
+        "degree_level": ["string"],
+        "certifications": ["string"]
+    },
+    "additional_info": {
+        "summary_statement": "string or null",
+        "languages_spoken": ["string"]
+    }
+}"""
+            }
+            
+            # Parse resume using OpenAI with anonymized text
+            structured_data = self.openai.parse_resume(llm_input["resume_text"])
             logger.debug(f"Extracted structured data: {json.dumps(structured_data, indent=2)}")
             
             # Extract location components
@@ -191,17 +263,17 @@ class ResumeProcessor:
             # Extract city, state, and country
             city = location_parts[0] if len(location_parts) > 0 else None
             state = location_parts[1] if len(location_parts) > 1 else None
-            country = location_parts[2] if len(location_parts) > 2 else 'Australia'  # Default to Australia if not specified
+            country = location_parts[2] if len(location_parts) > 2 else 'Australia'
             
-            # Merge the data with proper structure
+            # Merge the data with proper structure and anonymize PII
             parsed_data = {
                 'personal_info': {
-                    'full_name': pii_data.get('full_name'),
-                    'email': pii_data.get('email'),
-                    'phone': pii_data.get('phone'),
-                    'location': city,  # Store only city in location field
-                    'state': state,    # Store state separately
-                    'country': country, # Store country separately
+                    'full_name': '[NAME]',  # Always anonymize
+                    'email': '[EMAIL]',     # Always anonymize
+                    'phone': '[PHONE]',     # Always anonymize
+                    'location': city,
+                    'state': state,
+                    'country': country,
                     'linkedin_url': structured_data.get('personal_info', {}).get('linkedin_url')
                 },
                 'work_experience': {
@@ -254,13 +326,48 @@ class ResumeProcessor:
             
             logger.debug(f"Prepared data for storage: {json.dumps(data, indent=2)}")
             result = self.supabase.store_resume_data(data)
-            logger.info(f"Successfully stored resume data with ID: {result.get('id')}")
+            
+            # Store PII data separately
+            if result and result.get('id'):
+                self.supabase.store_pii_data(result['id'], pii_data)
             
             return result
             
         except Exception as e:
-            logger.error(f"Error processing resume content: {str(e)}", exc_info=True)
+            logger.error(f"Error processing resume content: {str(e)}")
             raise
+
+    def extract_text_from_file(self, file_content: bytes, file_name: str) -> str:
+        """Extract text from PDF or DOCX file"""
+        try:
+            if file_name.lower().endswith('.pdf'):
+                return self.read_pdf(file_content)
+            elif file_name.lower().endswith('.docx'):
+                return self.read_docx(file_content)
+            else:
+                raise ValueError(f"Unsupported file format: {file_name}")
+        except Exception as e:
+            logger.error(f"Error extracting text from file: {str(e)}")
+            raise
+
+    @lru_cache(maxsize=1000)
+    def read_docx(self, file_content: bytes) -> str:
+        """Read text content from a DOCX file with caching"""
+        try:
+            logger.debug("Reading DOCX content")
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
+                temp_file.write(file_content)
+                temp_file_path = temp_file.name
+            
+            try:
+                text = docx2txt.process(temp_file_path)
+                logger.debug(f"Successfully read DOCX content, length: {len(text)}")
+                return text
+            finally:
+                os.unlink(temp_file_path)
+        except Exception as e:
+            logger.error(f"Error reading DOCX file: {str(e)}", exc_info=True)
+            raise Exception(f"Error reading DOCX file: {str(e)}")
 
     def get_resume_data(self, id: str) -> Optional[Dict]:
         """
