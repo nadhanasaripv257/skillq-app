@@ -151,6 +151,8 @@ def main():
     # Add refresh button
     if st.button("🔄 Refresh"):
         st.session_state.refresh_key = time.time()
+        st.session_state.selected_draft = None
+        st.session_state.drafts_df = None  # Clear it so it can be recreated clean
         st.rerun()
 
     # Get drafts with pagination
@@ -195,7 +197,10 @@ def main():
     
     # Create DataFrame
     df = pd.DataFrame(table_data)
-    
+
+    # Always reset Select column to False
+    df["Select"] = False
+
     # Store the dataframe in session state
     st.session_state.drafts_df = df
     
@@ -348,18 +353,153 @@ def main():
             st.error(f"Error updating status: {str(e)}")
             st.error("Please try again or contact support if the issue persists.")
 
-    # Display detailed view for each draft
-    st.subheader("📝 Draft Details")
+    # Display selected candidate details at the top first
+    if st.session_state.selected_draft:
+        selected_draft_obj = next(
+            (d for d in drafts if d['resumes']['full_name'].lower().replace(' ', '-') == st.session_state.selected_draft),
+            None
+        )
+        if selected_draft_obj:
+            resume = selected_draft_obj['resumes']
+            st.subheader("📝 Selected Draft Details")
+            with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
+                # Candidate summary
+                st.markdown("#### Candidate Summary")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Name:** {resume['full_name']}")
+                    st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
+                    st.markdown(f"**Location:** {resume['location']}")
+                with col2:
+                    st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
+                    st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
+                    if resume.get('linkedin_url'):
+                        st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
+                
+                # Outreach message
+                st.markdown("#### Outreach Message")
+                outreach_message = st.text_area(
+                    "Message:",
+                    value=selected_draft_obj['outreach_message'],
+                    height=150
+                )
+                
+                # Screening questions
+                st.markdown("#### Screening Questions")
+                screening_questions = st.text_area(
+                    "Questions:",
+                    value=selected_draft_obj['screening_questions'],
+                    height=100
+                )
+                
+                # Save changes and move to tracker
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Save Changes", key=f"save_selected_{selected_draft_obj['id']}"):
+                        try:
+                            data = {
+                                'outreach_message': outreach_message,
+                                'screening_questions': screening_questions,
+                                'updated_at': datetime.now(UTC).isoformat()
+                            }
+                            
+                            response = supabase.table('recruiter_notes')\
+                                .update(data)\
+                                .eq('id', selected_draft_obj['id'])\
+                                .execute()
+                            
+                            if hasattr(response, 'error') and response.error:
+                                st.error(f"Error saving changes: {response.error}")
+                            else:
+                                st.success("Changes saved successfully!")
+                                st.session_state.refresh_key = time.time()
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error saving changes: {str(e)}")
+                
+                with col2:
+                    if st.button("✅ Mark as Contacted", key=f"contact_selected_{selected_draft_obj['id']}"):
+                        try:
+                            data = {
+                                'contact_status': True,
+                                'outreach_message': outreach_message,
+                                'screening_questions': screening_questions,
+                                'follow_up_required': selected_draft_obj.get('follow_up_required', False),
+                                'follow_up_date': selected_draft_obj.get('follow_up_date'),
+                                'updated_at': datetime.now(UTC).isoformat()
+                            }
+                            
+                            response = supabase.table('recruiter_notes')\
+                                .update(data)\
+                                .eq('id', selected_draft_obj['id'])\
+                                .execute()
+                            
+                            if hasattr(response, 'error') and response.error:
+                                st.error(f"Error marking as contacted: {response.error}")
+                            else:
+                                st.success("Candidate moved to tracker!")
+                                st.session_state.refresh_key = time.time()
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error marking as contacted: {str(e)}")
+                
+                # Update follow-up status
+                with st.form(key=f"update_followup_selected_{selected_draft_obj['id']}"):
+                    st.markdown("#### Update Follow-up Status")
+                    new_follow_up_required = st.checkbox("Follow-up Required", value=selected_draft_obj.get('follow_up_required', False))
+                    new_follow_up_date = st.date_input(
+                        "Follow-up Date",
+                        value=pd.to_datetime(selected_draft_obj.get('follow_up_date')).date() if selected_draft_obj.get('follow_up_date') else None
+                    )
+                    
+                    if st.form_submit_button("Update Follow-up Status"):
+                        try:
+                            # Convert the date to ISO format with timezone
+                            if new_follow_up_date:
+                                follow_up_date = pd.to_datetime(new_follow_up_date).tz_localize('UTC').isoformat()
+                            else:
+                                follow_up_date = None
+                                
+                            data = {
+                                'follow_up_required': new_follow_up_required,
+                                'follow_up_date': follow_up_date,
+                                'updated_at': datetime.now(UTC).isoformat()
+                            }
+                            
+                            response = supabase.table('recruiter_notes')\
+                                .update(data)\
+                                .eq('id', selected_draft_obj['id'])\
+                                .execute()
+                            
+                            if hasattr(response, 'error') and response.error:
+                                st.error(f"Error updating follow-up status: {response.error}")
+                            else:
+                                st.success("Follow-up status updated successfully!")
+                                st.session_state.refresh_key = time.time()
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error updating follow-up status: {str(e)}")
+                
+                # Timestamps
+                st.markdown(f"*Created: {format_timestamp(selected_draft_obj['created_at'])}*")
+                if selected_draft_obj.get('updated_at'):
+                    st.markdown(f"*Last Updated: {format_timestamp(selected_draft_obj['updated_at'])}*")
+
+    # Divider for the rest
+    st.markdown("---")
+    st.subheader("📝 All Draft Details")
+
+    # Display remaining drafts
     for draft in drafts:
+        anchor_id = draft['resumes']['full_name'].lower().replace(' ', '-')
+        if anchor_id == st.session_state.selected_draft:
+            continue  # Already shown above
+
         resume = draft['resumes']
-        # Create anchor for this draft
-        anchor_id = resume['full_name'].lower().replace(' ', '-')
-        st.markdown(f"<div id='{anchor_id}'></div>", unsafe_allow_html=True)
-        
-        # Expand the section if this is the selected draft
-        is_expanded = st.session_state.selected_draft == anchor_id
-        
-        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=is_expanded):
+        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=False):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
@@ -496,6 +636,7 @@ def main():
             if st.session_state.drafts_page > 1:
                 if st.button("← Previous"):
                     st.session_state.drafts_page -= 1
+                    st.session_state.selected_draft = None
                     st.rerun()
         
         with col2:
@@ -505,6 +646,7 @@ def main():
             if st.session_state.drafts_page < total_pages:
                 if st.button("Next →"):
                     st.session_state.drafts_page += 1
+                    st.session_state.selected_draft = None
                     st.rerun()
 
 if __name__ == "__main__":
