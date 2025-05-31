@@ -176,7 +176,8 @@ def main():
         resume = draft['resumes']
         pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
         # Create a unique anchor ID for each draft
-        anchor_id = pii_data.get('full_name', '').lower().replace(' ', '-')
+        full_name = str(pii_data.get('full_name', '') or '')
+        anchor_id = full_name.lower().replace(' ', '-')
         try:
             follow_up_date = pd.to_datetime(draft.get('follow_up_date')).date() if draft.get('follow_up_date') else None
         except (ValueError, TypeError):
@@ -275,8 +276,11 @@ def main():
                 st.warning("Please select only one draft to view details")
             else:
                 # Get the selected draft's name and convert to ID format
-                selected_name = selected.iloc[0]['Candidate Name']
-                st.session_state.selected_draft = selected_name.lower().replace(' ', '-')
+                selected_name = selected.iloc[0].get('Candidate Name', '')
+                if isinstance(selected_name, str):
+                    st.session_state.selected_draft = selected_name.lower().replace(' ', '-')
+                else:
+                    st.session_state.selected_draft = ''
                 
                 # Add JavaScript to scroll to the selected draft's section
                 js = f"""
@@ -351,14 +355,15 @@ def main():
     # Display selected candidate details at the top first
     if st.session_state.selected_draft:
         selected_draft_obj = next(
-            (d for d in drafts if d['resumes']['resumes_pii'][0]['full_name'].lower().replace(' ', '-') == st.session_state.selected_draft),
+            (d for d in drafts if str(d.get('resumes', {}).get('resumes_pii', [{}])[0].get('full_name', '') or '').lower().replace(' ', '-') == st.session_state.selected_draft),
             None
         )
         if selected_draft_obj:
-            resume = selected_draft_obj['resumes']
-            pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
+            resume = selected_draft_obj.get('resumes', {})
+            pii_data = resume.get('resumes_pii', [{}])[0] if resume.get('resumes_pii') else {}
+            full_name = str(pii_data.get('full_name', '') or '')
             st.subheader("📝 Selected Draft Details")
-            with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=True):
+            with st.expander(f"👤 {full_name or 'N/A'} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=True):
                 # Candidate summary
                 st.markdown("#### Candidate Summary")
                 col1, col2 = st.columns(2)
@@ -488,13 +493,15 @@ def main():
 
     # Display remaining drafts
     for draft in drafts:
-        resume = draft['resumes']
-        pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
-        anchor_id = pii_data.get('full_name', '').lower().replace(' ', '-')
+        resume = draft.get('resumes', {})
+        pii_data = resume.get('resumes_pii', [{}])[0] if resume.get('resumes_pii') else {}
+        # Ensure we have a string value before calling lower()
+        full_name = str(pii_data.get('full_name', '') or '')
+        anchor_id = full_name.lower().replace(' ', '-')
         if anchor_id == st.session_state.selected_draft:
             continue  # Already shown above
 
-        with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=False):
+        with st.expander(f"👤 {full_name or 'N/A'} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=False):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)

@@ -82,6 +82,12 @@ def format_timestamp(timestamp):
     except:
         return timestamp
 
+def slugify_name(name):
+    """Safely convert a name to a URL-friendly slug"""
+    if isinstance(name, str) and name.strip().lower() not in ["", "n/a", "none"]:
+        return name.lower().replace(" ", "-")
+    return None
+
 def main():
     st.set_page_config(
         page_title="SkillQ - Candidate Tracker",
@@ -240,8 +246,10 @@ def main():
                 st.warning("Please select only one candidate to view details")
             else:
                 # Get the selected candidate's name and convert to ID format
-                selected_name = selected.iloc[0]['Candidate Name']
-                st.session_state.selected_candidate = selected_name.lower().replace(' ', '-')
+                selected_name = selected.iloc[0].get('Candidate Name', '')
+                st.session_state.selected_candidate = slugify_name(selected_name)
+                if not st.session_state.selected_candidate:
+                    st.warning("Invalid candidate name selected")
                 
                 # Add JavaScript to scroll to the selected candidate's section
                 js = f"""
@@ -319,14 +327,15 @@ def main():
     # Display selected candidate details at the top first
     if st.session_state.selected_candidate:
         selected_candidate_obj = next(
-            (c for c in candidates if c['resumes']['resumes_pii'][0]['full_name'].lower().replace(' ', '-') == st.session_state.selected_candidate),
+            (c for c in candidates if slugify_name(c.get('resumes', {}).get('resumes_pii', [{}])[0].get('full_name', '')) == st.session_state.selected_candidate),
             None
         )
         if selected_candidate_obj:
-            resume = selected_candidate_obj['resumes']
-            pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
+            resume = selected_candidate_obj.get('resumes', {})
+            pii_data = resume.get('resumes_pii', [{}])[0] if resume.get('resumes_pii') else {}
+            full_name = str(pii_data.get('full_name', '') or '')
             st.subheader("📝 Selected Candidate Details")
-            with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=True):
+            with st.expander(f"👤 {full_name or 'N/A'} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=True):
                 # Candidate summary
                 st.markdown("#### Candidate Summary")
                 col1, col2 = st.columns(2)
@@ -400,13 +409,14 @@ def main():
 
     # Display remaining candidates
     for candidate in candidates:
-        resume = candidate['resumes']
-        pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
-        anchor_id = pii_data.get('full_name', '').lower().replace(' ', '-')
+        resume = candidate.get('resumes', {})
+        pii_data = resume.get('resumes_pii', [{}])[0] if resume.get('resumes_pii') else {}
+        full_name = str(pii_data.get('full_name', '') or '')
+        anchor_id = slugify_name(full_name)
         if anchor_id == st.session_state.selected_candidate:
             continue  # Already shown above
 
-        with st.expander(f"👤 {pii_data.get('full_name', 'N/A')} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=False):
+        with st.expander(f"👤 {full_name or 'N/A'} - {resume.get('current_or_last_job_title', 'N/A')}", expanded=False):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
