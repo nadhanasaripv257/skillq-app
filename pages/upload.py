@@ -37,7 +37,7 @@ load_dotenv()
 supabase_client = SupabaseClient()
 
 # Initialize ResumeProcessor with caching
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_resume_processor():
     return ResumeProcessor()
 

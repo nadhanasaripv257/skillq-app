@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from datetime import datetime, UTC
 import pandas as pd
 import time
+from slugify import slugify
 
 # Load environment variables
 load_dotenv()
@@ -177,7 +178,7 @@ def main():
         pii_data = resume['resumes_pii'][0] if resume.get('resumes_pii') and len(resume['resumes_pii']) > 0 else {}
         # Create a unique anchor ID for each draft
         full_name = str(pii_data.get('full_name', '') or '')
-        anchor_id = full_name.lower().replace(' ', '-')
+        anchor_id = slugify(full_name)
         try:
             follow_up_date = pd.to_datetime(draft.get('follow_up_date')).date() if draft.get('follow_up_date') else None
         except (ValueError, TypeError):
@@ -495,9 +496,8 @@ def main():
     for draft in drafts:
         resume = draft.get('resumes', {})
         pii_data = resume.get('resumes_pii', [{}])[0] if resume.get('resumes_pii') else {}
-        # Ensure we have a string value before calling lower()
         full_name = str(pii_data.get('full_name', '') or '')
-        anchor_id = full_name.lower().replace(' ', '-')
+        anchor_id = slugify(full_name)
         if anchor_id == st.session_state.selected_draft:
             continue  # Already shown above
 
@@ -513,115 +513,68 @@ def main():
                 st.markdown(f"**Email:** {pii_data.get('email', 'N/A')}")
                 st.markdown(f"**Phone:** {pii_data.get('phone', 'N/A')}")
             
-            # Outreach message
-            st.markdown("#### Outreach Message")
-            outreach_message = st.text_area(
+            # Last outreach message
+            st.markdown("#### Last Outreach Message")
+            st.text_area(
                 "Message:",
                 value=draft['outreach_message'],
-                height=150
+                height=150,
+                key=f"message_{draft['id']}_selected"
             )
-            
+
             # Screening questions
             st.markdown("#### Screening Questions")
-            screening_questions = st.text_area(
+            st.text_area(
                 "Questions:",
                 value=draft['screening_questions'],
-                height=100
+                height=100,
+                key=f"questions_{draft['id']}_selected"
             )
-            
-            # Save changes and move to tracker
+
+            # Follow-up status
+            st.markdown("#### Follow-up Status")
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("💾 Save Changes", key=f"save_{draft['id']}"):
-                    try:
-                        data = {
-                            'outreach_message': outreach_message,
-                            'screening_questions': screening_questions,
-                            'updated_at': datetime.now(UTC).isoformat()
-                        }
-                        
-                        response = supabase.table('recruiter_notes')\
-                            .update(data)\
-                            .eq('id', draft['id'])\
-                            .execute()
-                        
-                        if hasattr(response, 'error') and response.error:
-                            st.error(f"Error saving changes: {response.error}")
-                        else:
-                            st.success("Changes saved successfully!")
-                            st.session_state.refresh_key = time.time()
-                            st.rerun()
-                            
-                    except Exception as e:
-                        st.error(f"Error saving changes: {str(e)}")
-            
+                st.markdown(f"**Follow-up Required:** {'Yes' if draft.get('follow_up_required') else 'No'}")
             with col2:
-                if st.button("✅ Mark as Contacted", key=f"contact_{draft['id']}"):
-                    try:
-                        data = {
-                            'contact_status': True,
-                            'outreach_message': outreach_message,
-                            'screening_questions': screening_questions,
-                            'follow_up_required': draft.get('follow_up_required', False),
-                            'follow_up_date': draft.get('follow_up_date'),
-                            'updated_at': datetime.now(UTC).isoformat()
-                        }
-                        
-                        response = supabase.table('recruiter_notes')\
-                            .update(data)\
-                            .eq('id', draft['id'])\
-                            .execute()
-                        
-                        if hasattr(response, 'error') and response.error:
-                            st.error(f"Error marking as contacted: {response.error}")
-                        else:
-                            st.success("Candidate moved to tracker!")
-                            st.session_state.refresh_key = time.time()
-                            st.rerun()
-                            
-                    except Exception as e:
-                        st.error(f"Error marking as contacted: {str(e)}")
-            
+                follow_up_date = draft.get('follow_up_date')
+                if follow_up_date:
+                    st.markdown(f"**Follow-up Date:** {format_timestamp(follow_up_date)}")
+
             # Update follow-up status
-            with st.form(key=f"update_followup_{draft['id']}"):
+            with st.form(key=f"update_followup_{draft['id']}_remaining"):
                 st.markdown("#### Update Follow-up Status")
                 new_follow_up_required = st.checkbox("Follow-up Required", value=draft.get('follow_up_required', False))
                 new_follow_up_date = st.date_input(
                     "Follow-up Date",
                     value=pd.to_datetime(draft.get('follow_up_date')).date() if draft.get('follow_up_date') else None
                 )
-                
+
                 if st.form_submit_button("Update Follow-up Status"):
                     try:
-                        # Convert the date to ISO format with timezone
-                        if new_follow_up_date:
-                            follow_up_date = pd.to_datetime(new_follow_up_date).tz_localize('UTC').isoformat()
-                        else:
-                            follow_up_date = None
-                            
                         data = {
                             'follow_up_required': new_follow_up_required,
-                            'follow_up_date': follow_up_date,
+                            'follow_up_date': new_follow_up_date.strftime('%Y-%m-%dT00:00:00Z') if new_follow_up_date else None,
                             'updated_at': datetime.now(UTC).isoformat()
                         }
-                        
+
                         response = supabase.table('recruiter_notes')\
                             .update(data)\
                             .eq('id', draft['id'])\
                             .execute()
-                        
+
                         if hasattr(response, 'error') and response.error:
                             st.error(f"Error updating follow-up status: {response.error}")
                         else:
                             st.success("Follow-up status updated successfully!")
                             st.session_state.refresh_key = time.time()
                             st.rerun()
-                            
+
                     except Exception as e:
                         st.error(f"Error updating follow-up status: {str(e)}")
             
             # Timestamps
-            st.markdown(f"*Created: {format_timestamp(draft['created_at'])}*")
+            st.markdown(f"*First Contact: {format_timestamp(draft['created_at'])}*")
             if draft.get('updated_at'):
                 st.markdown(f"*Last Updated: {format_timestamp(draft['updated_at'])}*")
 
