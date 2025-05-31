@@ -120,6 +120,7 @@ def main():
     # Add refresh button
     if st.button("🔄 Refresh"):
         st.session_state.refresh_key = time.time()
+        st.session_state.selected_candidate = None  # Clear selected candidate
         st.rerun()
 
     # Add view options
