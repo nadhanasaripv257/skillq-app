@@ -189,12 +189,20 @@ def refine_search_candidates(query, current_filters):
         final_candidates = []
         if matched_ids:
             for candidate_id in matched_ids:
+                # Join resumes with resumes_pii to get PII data
                 response = supabase_client.table('resumes')\
-                    .select('id, full_name, location, total_years_experience, current_or_last_job_title, skills, search_blob, risk_score, issues')\
+                    .select('id, location, total_years_experience, current_or_last_job_title, skills, search_blob, risk_score, issues, resumes_pii(full_name, email, phone)')\
                     .eq('id', candidate_id)\
                     .execute()
                 if response.data:
                     candidate = response.data[0]
+                    # Flatten the PII data
+                    if candidate.get('resumes_pii') and isinstance(candidate['resumes_pii'], list) and len(candidate['resumes_pii']) > 0:
+                        pii_data = candidate['resumes_pii'][0]  # Get the first PII record
+                        candidate['full_name'] = pii_data.get('full_name')
+                        candidate['email'] = pii_data.get('email')
+                        candidate['phone'] = pii_data.get('phone')
+                        del candidate['resumes_pii']
                     
                     # Apply location filter if present
                     if current_filters.get('location'):
@@ -219,11 +227,11 @@ def refine_search_candidates(query, current_filters):
         
         # Log detailed matching information
         for _, candidate in df.iterrows():
-            logger.info(f"\nCandidate: {candidate['full_name']}")
-            logger.info(f"Location: {candidate['location']}")
-            logger.info(f"Job Title: {candidate['current_or_last_job_title']}")
-            logger.info(f"Experience: {candidate['total_years_experience']} years")
-            logger.info(f"Skills: {candidate['skills']}")
+            logger.info(f"\nCandidate: {candidate.get('full_name', 'N/A')}")
+            logger.info(f"Location: {candidate.get('location', 'N/A')}")
+            logger.info(f"Job Title: {candidate.get('current_or_last_job_title', 'N/A')}")
+            logger.info(f"Experience: {candidate.get('total_years_experience', 'N/A')} years")
+            logger.info(f"Skills: {candidate.get('skills', [])}")
             
             # Log which filters matched
             if current_filters.get('location'):
@@ -232,7 +240,7 @@ def refine_search_candidates(query, current_filters):
                 logger.info(f"✓ Matched experience: {current_filters['experience_years_min']}+ years")
             if keywords:
                 # Check for partial matches in the pipe-separated list
-                candidate_keywords = candidate['search_blob'].split('|')
+                candidate_keywords = candidate.get('search_blob', '').split('|')
                 matched_keywords = []
                 for kw in keywords:
                     # For keywords >= 3 chars, allow partial matches
@@ -436,19 +444,17 @@ def display_candidate_profile(candidate):
     
     with col1:
         st.markdown("#### Personal Information")
-        st.markdown(f"**Name:** {candidate['full_name']}")
-        st.markdown(f"**Location:** {candidate['location']}")
-        if 'email' in candidate:
-            st.markdown(f"**Email:** {candidate['email']}")
-        if 'phone' in candidate:
-            st.markdown(f"**Phone:** {candidate['phone']}")
+        st.markdown(f"**Name:** {candidate.get('full_name', 'N/A')}")
+        st.markdown(f"**Location:** {candidate.get('location', 'N/A')}")
+        st.markdown(f"**Email:** {candidate.get('email', 'N/A')}")
+        st.markdown(f"**Phone:** {candidate.get('phone', 'N/A')}")
         if 'linkedin_url' in candidate:
             st.markdown(f"**LinkedIn:** {candidate['linkedin_url']}")
     
     with col2:
         st.markdown("#### Professional Information")
-        st.markdown(f"**Current Role:** {candidate['current_or_last_job_title']}")
-        st.markdown(f"**Experience:** {candidate['total_years_experience']} years")
+        st.markdown(f"**Current Role:** {candidate.get('current_or_last_job_title', 'N/A')}")
+        st.markdown(f"**Experience:** {candidate.get('total_years_experience', 'N/A')} years")
         if 'employment_type' in candidate:
             st.markdown(f"**Employment Type:** {candidate['employment_type']}")
         if 'availability' in candidate:
