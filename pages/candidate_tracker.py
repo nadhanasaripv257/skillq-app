@@ -36,9 +36,9 @@ def initialize_session_state():
 def get_contacted_candidates(recruiter_id, refresh_key=None, filter_date=None):
     """Get all contacted candidates with optional date filter"""
     try:
-        # Base query
-        query = supabase.table('recruiter_notes')\
-            .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
+        # Base query for count
+        count_query = supabase.table('recruiter_notes')\
+            .select('id', count='exact')\
             .eq('recruiter_id', recruiter_id)\
             .eq('contact_status', True)
         
@@ -46,19 +46,33 @@ def get_contacted_candidates(recruiter_id, refresh_key=None, filter_date=None):
         if filter_date:
             # Convert date to ISO format string
             date_str = filter_date.isoformat()
+            count_query = count_query.eq('follow_up_date', date_str)
+        
+        # Get total count
+        count_response = count_query.execute()
+        total_count = count_response.count if hasattr(count_response, 'count') else 0
+        
+        # Base query for data
+        query = supabase.table('recruiter_notes')\
+            .select('*, resumes!inner(full_name, current_or_last_job_title, location, email, phone, linkedin_url)')\
+            .eq('recruiter_id', recruiter_id)\
+            .eq('contact_status', True)
+        
+        # Add date filter if provided
+        if filter_date:
             query = query.eq('follow_up_date', date_str)
         
-        # Execute query
+        # Execute query for data
         response = query.order('follow_up_date', desc=True)\
             .execute()
             
         if not response.data:
-            return []
+            return [], 0
             
-        return response.data
+        return response.data, total_count
     except Exception as e:
         st.error(f"Error fetching candidates: {str(e)}")
-        return []
+        return [], 0
 
 def format_timestamp(timestamp):
     """Format timestamp to readable string"""
@@ -133,7 +147,7 @@ def main():
                 st.rerun()
 
     # Get contacted candidates with date filter
-    candidates = get_contacted_candidates(
+    candidates, total_count = get_contacted_candidates(
         recruiter_id,
         st.session_state.refresh_key,
         filter_date
@@ -301,18 +315,97 @@ def main():
             st.error(f"Error updating follow-up status: {str(e)}")
             st.error("Please try again or contact support if the issue persists.")
 
-    # Display detailed view for each candidate
-    st.subheader("📝 Candidate Details")
+    # Display selected candidate details at the top first
+    if st.session_state.selected_candidate:
+        selected_candidate_obj = next(
+            (c for c in candidates if c['resumes']['full_name'].lower().replace(' ', '-') == st.session_state.selected_candidate),
+            None
+        )
+        if selected_candidate_obj:
+            resume = selected_candidate_obj['resumes']
+            st.subheader("📝 Selected Candidate Details")
+            with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=True):
+                # Candidate summary
+                st.markdown("#### Candidate Summary")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Name:** {resume['full_name']}")
+                    st.markdown(f"**Current Role:** {resume['current_or_last_job_title']}")
+                    st.markdown(f"**Location:** {resume['location']}")
+                with col2:
+                    st.markdown(f"**Email:** {resume.get('email', 'N/A')}")
+                    st.markdown(f"**Phone:** {resume.get('phone', 'N/A')}")
+                    if resume.get('linkedin_url'):
+                        st.markdown(f"**LinkedIn:** [{resume['linkedin_url']}]({resume['linkedin_url']})")
+                
+                # Last outreach message
+                st.markdown("#### Last Outreach Message")
+                st.text_area(
+                    "Message:",
+                    value=selected_candidate_obj['outreach_message'],
+                    height=150,
+                    disabled=True
+                )
+                
+                # Follow-up status
+                st.markdown("#### Follow-up Status")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Follow-up Required:** {'Yes' if selected_candidate_obj.get('follow_up_required') else 'No'}")
+                with col2:
+                    follow_up_date = selected_candidate_obj.get('follow_up_date')
+                    if follow_up_date:
+                        st.markdown(f"**Follow-up Date:** {format_timestamp(follow_up_date)}")
+                
+                # Update follow-up status
+                with st.form(key=f"update_followup_selected_{selected_candidate_obj['id']}"):
+                    st.markdown("#### Update Follow-up Status")
+                    new_follow_up_required = st.checkbox("Follow-up Required", value=selected_candidate_obj.get('follow_up_required', False))
+                    new_follow_up_date = st.date_input(
+                        "Follow-up Date",
+                        value=pd.to_datetime(selected_candidate_obj.get('follow_up_date')).date() if selected_candidate_obj.get('follow_up_date') else None
+                    )
+                    
+                    if st.form_submit_button("Update Follow-up Status"):
+                        try:
+                            data = {
+                                'follow_up_required': new_follow_up_required,
+                                'follow_up_date': new_follow_up_date.strftime('%Y-%m-%dT00:00:00Z') if new_follow_up_date else None,
+                                'updated_at': datetime.now(UTC).isoformat()
+                            }
+                            
+                            response = supabase.table('recruiter_notes')\
+                                .update(data)\
+                                .eq('id', selected_candidate_obj['id'])\
+                                .execute()
+                            
+                            if hasattr(response, 'error') and response.error:
+                                st.error(f"Error updating follow-up status: {response.error}")
+                            else:
+                                st.success("Follow-up status updated successfully!")
+                                st.session_state.refresh_key = time.time()
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error updating follow-up status: {str(e)}")
+                
+                # Timestamps
+                st.markdown(f"*First Contact: {format_timestamp(selected_candidate_obj['created_at'])}*")
+                if selected_candidate_obj.get('updated_at'):
+                    st.markdown(f"*Last Updated: {format_timestamp(selected_candidate_obj['updated_at'])}*")
+
+    # Divider for the rest
+    st.markdown("---")
+    st.subheader("📝 All Candidate Details")
+
+    # Display remaining candidates
     for candidate in candidates:
+        anchor_id = candidate['resumes']['full_name'].lower().replace(' ', '-')
+        if anchor_id == st.session_state.selected_candidate:
+            continue  # Already shown above
+
         resume = candidate['resumes']
-        # Create anchor for this candidate
-        anchor_id = resume['full_name'].lower().replace(' ', '-')
-        st.markdown(f"<div id='{anchor_id}'></div>", unsafe_allow_html=True)
-        
-        # Expand the section if this is the selected candidate
-        is_expanded = st.session_state.selected_candidate == anchor_id
-        
-        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=is_expanded):
+        with st.expander(f"👤 {resume['full_name']} - {resume['current_or_last_job_title']}", expanded=False):
             # Candidate summary
             st.markdown("#### Candidate Summary")
             col1, col2 = st.columns(2)
@@ -381,6 +474,30 @@ def main():
             st.markdown(f"*First Contact: {format_timestamp(candidate['created_at'])}*")
             if candidate.get('updated_at'):
                 st.markdown(f"*Last Updated: {format_timestamp(candidate['updated_at'])}*")
+
+    # Pagination
+    total_pages = (total_count + st.session_state.tracker_per_page - 1) // st.session_state.tracker_per_page
+    
+    if total_pages > 1:
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.session_state.tracker_page > 1:
+                if st.button("← Previous"):
+                    st.session_state.tracker_page -= 1
+                    st.session_state.selected_candidate = None
+                    st.rerun()
+        
+        with col2:
+            st.markdown(f"**Page {st.session_state.tracker_page} of {total_pages}**")
+        
+        with col3:
+            if st.session_state.tracker_page < total_pages:
+                if st.button("Next →"):
+                    st.session_state.tracker_page += 1
+                    st.session_state.selected_candidate = None
+                    st.rerun()
 
 if __name__ == "__main__":
     main() 
