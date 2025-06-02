@@ -79,10 +79,13 @@ def signup_user(email: str, password: str) -> bool:
                 st.info("Please check your email to verify your account before logging in.")
                 return True
 
-            print("🔧 Creating authenticated client...")
-            # Create authenticated client with token
-            supabase_authed = get_authed_supabase(access_token)
-            print("✅ Client created successfully")
+            print("🔧 Creating service role client...")
+            # Create service role client for profile creation
+            supabase_admin = create_client(
+                supabase_url=os.environ.get("SUPABASE_URL"),
+                supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")  # Use service role key
+            )
+            print("✅ Service role client created successfully")
 
             # Build profile
             default_profile = {
@@ -96,9 +99,9 @@ def signup_user(email: str, password: str) -> bool:
                 'updated_at': datetime.now(UTC).isoformat()
             }
 
-            print("🔧 Attempting to insert profile...")
-            # Insert profile
-            insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
+            print("🔧 Attempting to insert profile with service role...")
+            # Insert profile using service role client
+            insert_response = supabase_admin.table('user_profiles').insert(default_profile).execute()
             if insert_response.data:
                 print("✅ Profile created successfully.")
                 return True
