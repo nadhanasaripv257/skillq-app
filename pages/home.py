@@ -49,14 +49,14 @@ def get_user_profile(refresh_key=None):
         # Create service role client with explicit headers
         supabase_admin = create_client(
             supabase_url=os.environ.get("SUPABASE_URL"),
-            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
-            options={
-                "headers": {
-                    "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
-                    "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
-                }
-            }
+            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
         )
+        
+        # Set the headers explicitly
+        supabase_admin.postgrest.headers = {
+            "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+            "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
+        }
         
         # Get the profile data using service role client
         profile_response = supabase_admin.table('user_profiles').select('*').eq('user_id', user_id).execute()
