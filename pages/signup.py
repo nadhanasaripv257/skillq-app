@@ -1,6 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
-from postgrest import SyncClient
+from postgrest import PostgrestClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime, UTC
@@ -21,7 +21,7 @@ def get_authed_supabase(access_token: str) -> Client:
         os.environ.get("SUPABASE_KEY")
     )
     # Inject the token manually into the postgrest client
-    client.postgrest = SyncClient(
+    client.postgrest = PostgrestClient(
         f"{os.environ.get('SUPABASE_URL')}/rest/v1",
         headers={"Authorization": f"Bearer {access_token}"}
     )
