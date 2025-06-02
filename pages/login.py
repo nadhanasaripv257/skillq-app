@@ -26,26 +26,18 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
     """Create a user profile in Supabase if it doesn't exist"""
 
     try:
-        # Recreate the client with Authorization header
         supabase_authed = create_client(
             os.environ.get("SUPABASE_URL"),
-            os.environ.get("SUPABASE_KEY"),
-            options={
-                "global": {
-                    "headers": {
-                        "Authorization": f"Bearer {access_token}"
-                    }
-                }
-            }
+            os.environ.get("SUPABASE_KEY")
         )
+        supabase_authed.auth.set_session(access_token, refresh_token=None)
 
-        # Check if profile already exists
+        # Check if profile exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
         if profile_response.data:
             print("✅ Profile already exists.")
             return True
 
-        # Create profile
         default_profile = {
             'user_id': user_id,
             'full_name': email.split('@')[0],
