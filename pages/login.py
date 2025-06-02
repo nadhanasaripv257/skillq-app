@@ -1,5 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
+from postgrest import SyncClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime, UTC
@@ -13,6 +14,19 @@ supabase: Client = create_client(
     supabase_key=os.environ.get("SUPABASE_KEY")
 )
 
+def get_authed_supabase(access_token: str) -> Client:
+    """Create an authenticated Supabase client with the given access token"""
+    client = create_client(
+        os.environ.get("SUPABASE_URL"),
+        os.environ.get("SUPABASE_KEY")
+    )
+    # Inject the token manually into the postgrest client
+    client.postgrest = SyncClient(
+        f"{os.environ.get('SUPABASE_URL')}/rest/v1",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    return client
+
 def initialize_session_state():
     """Initialize session state variables"""
     if 'authenticated' not in st.session_state:
@@ -25,14 +39,9 @@ def initialize_session_state():
 def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
     """Create a user profile in Supabase if it doesn't exist"""
     try:
-        # Create authenticated client
-        supabase_authed = create_client(
-            os.environ.get("SUPABASE_URL"),
-            os.environ.get("SUPABASE_KEY")
-        )
-        
-        # Set the session with the access token and empty refresh token
-        supabase_authed.auth.set_session(access_token, refresh_token="")
+        print(f"🔧 Creating authenticated client for user: {user_id}")
+        # Create authenticated client with token
+        supabase_authed = get_authed_supabase(access_token)
         
         # Check if profile exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
@@ -52,7 +61,7 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
             'updated_at': datetime.now(UTC).isoformat()
         }
 
-        print("🔧 Attempting to insert profile with session auth...")
+        print("🔧 Attempting to insert profile...")
         insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
         print("✅ Insert response:", insert_response)
         return bool(insert_response.data)

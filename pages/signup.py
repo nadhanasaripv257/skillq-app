@@ -1,5 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
+from postgrest import SyncClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime, UTC
@@ -12,6 +13,19 @@ supabase: Client = create_client(
     supabase_url=os.environ.get("SUPABASE_URL"),
     supabase_key=os.environ.get("SUPABASE_KEY")
 )
+
+def get_authed_supabase(access_token: str) -> Client:
+    """Create an authenticated Supabase client with the given access token"""
+    client = create_client(
+        os.environ.get("SUPABASE_URL"),
+        os.environ.get("SUPABASE_KEY")
+    )
+    # Inject the token manually into the postgrest client
+    client.postgrest = SyncClient(
+        f"{os.environ.get('SUPABASE_URL')}/rest/v1",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    return client
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -53,13 +67,9 @@ def signup_user(email: str, password: str) -> bool:
                 return True
 
             print("🔧 Creating authenticated client...")
-            # Authenticated Supabase client
-            supabase_authed = create_client(
-                os.environ.get("SUPABASE_URL"),
-                os.environ.get("SUPABASE_KEY")
-            )
-            supabase_authed.auth.set_session(access_token, refresh_token="")
-            print("✅ Session set successfully")
+            # Create authenticated client with token
+            supabase_authed = get_authed_supabase(access_token)
+            print("✅ Client created successfully")
 
             # Build profile
             default_profile = {
