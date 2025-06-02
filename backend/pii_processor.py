@@ -14,18 +14,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Load spaCy model with runtime download if needed
+try:
+    nlp = spacy.load("en_core_web_lg")
+except OSError:
+    from spacy.cli import download
+    download("en_core_web_lg")
+    nlp = spacy.load("en_core_web_lg")
+
 class PIIProcessor:
     def __init__(self):
         """Initialize the PII processor with Presidio"""
         try:
-            # Ensure spaCy model is loaded
-            try:
-                spacy.load('en_core_web_lg')
-            except OSError:
-                logger.info("Downloading spaCy model...")
-                spacy.cli.download('en_core_web_lg')
-                spacy.load('en_core_web_lg')
-            
             # Initialize NLP engine with spaCy
             nlp_engine = NlpEngineProvider().create_engine()
             
