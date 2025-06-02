@@ -102,7 +102,11 @@ class SupabaseClient:
         if not arr:
             return '{}'
         # Escape single quotes and wrap each element in quotes
-        formatted = [f'"{str(item).replace("\"", "\\\"")}"' for item in arr]
+        formatted = []
+        for item in arr:
+            # Replace double quotes with escaped double quotes
+            escaped_item = str(item).replace('"', '\\"')
+            formatted.append(f'"{escaped_item}"')
         return '{' + ','.join(formatted) + '}'
 
     def store_resume_data(self, data: Dict) -> Dict:
