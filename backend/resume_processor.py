@@ -75,10 +75,10 @@ class ResumeProcessor:
         issues = []
         
         try:
-            work_experience = parsed_data.get('work_experience', {})
-            skills_and_tools = parsed_data.get('skills_and_tools', {})
-            personal_info = parsed_data.get('personal_info', {})
-            education = parsed_data.get('education_and_certifications', {})
+            work_experience = parsed_data.get('work_experience', {}) or {}
+            skills_and_tools = parsed_data.get('skills_and_tools', {}) or {}
+            personal_info = parsed_data.get('personal_info', {}) or {}
+            education = parsed_data.get('education_and_certifications', {}) or {}
             
             # Check for missing key information (1 point)
             missing_info = []
@@ -96,24 +96,24 @@ class ResumeProcessor:
                 issues.append(f"Missing key information: {', '.join(missing_info)}")
             
             # Check for overlapping roles (2 points)
-            job_titles = work_experience.get('previous_job_titles', [])
+            job_titles = work_experience.get('previous_job_titles', []) or []
             if len(set(job_titles)) < len(job_titles):
                 risk_score += 2
                 issues.append("Overlapping roles detected in work history")
             
             # Check for unrealistic skill claims (1 point)
-            skills = skills_and_tools.get('skills', [])
-            years_experience = work_experience.get('total_years_experience', 0)
+            skills = skills_and_tools.get('skills', []) or []
+            years_experience = work_experience.get('total_years_experience')
             
-            if years_experience > 0:
+            if years_experience is not None and years_experience > 0:
                 skill_density = len(skills) / years_experience
                 if skill_density > 3:  # More than 3 skills per year of experience
                     risk_score += 1
                     issues.append(f"High skill density ({skill_density:.1f} skills/year) for experience level")
             
             # Check for multiple short job stints (2 points)
-            companies = work_experience.get('companies_worked_at', [])
-            if len(companies) > 3 and years_experience < 5:
+            companies = work_experience.get('companies_worked_at', []) or []
+            if len(companies) > 3 and (years_experience is None or years_experience < 5):
                 risk_score += 2
                 issues.append("Multiple short job stints detected")
             
@@ -124,21 +124,23 @@ class ResumeProcessor:
                     issues.append("Inconsistent title progression detected")
             
             # Check for insufficient details (1 point)
-            if not work_experience.get('summary_statement') or len(work_experience.get('summary_statement', '')) < 100:
+            summary = work_experience.get('summary_statement', '')
+            if not summary or len(summary) < 100:
                 risk_score += 1
                 issues.append("Insufficient details in resume")
             
             # Check for education-job mismatch (1 point)
-            degree_level = education.get('degree_level', [])
-            if degree_level and work_experience.get('current_or_last_job_title'):
-                current_title = work_experience['current_or_last_job_title'].lower()
+            degree_level = education.get('degree_level', []) or []
+            current_title = work_experience.get('current_or_last_job_title', '')
+            if degree_level and current_title:
+                current_title = current_title.lower()
                 if any('phd' in level.lower() or 'doctorate' in level.lower() for level in degree_level) and \
                    any(word in current_title for word in ['junior', 'entry', 'associate', 'trainee']):
                     risk_score += 1
                     issues.append("Education level appears mismatched with current role")
             
             # Check for rapid career progression (1 point)
-            if len(job_titles) > 2 and years_experience < 3:
+            if len(job_titles) > 2 and (years_experience is None or years_experience < 3):
                 risk_score += 1
                 issues.append("Rapid career progression detected")
             
