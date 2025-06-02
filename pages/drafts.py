@@ -90,12 +90,12 @@ def copy_to_clipboard(text):
 def get_user_profile(refresh_key=None):
     """Get user profile from Supabase"""
     try:
-        # Get the user's ID from auth.users
-        user_response = supabase.auth.get_user()
-        if not user_response.user:
+        # Get user ID from session state
+        if not st.session_state.get('user_id'):
+            print("❌ No user_id in session state")
             return None
         
-        user_id = user_response.user.id
+        user_id = st.session_state.user_id
         
         # Get the profile data
         profile_response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()

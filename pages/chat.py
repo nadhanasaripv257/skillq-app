@@ -341,13 +341,12 @@ def format_candidate_response(candidates):
                     continue
                 
                 with st.spinner("Generating personalized outreach..."):
-                    # Get user ID from session
-                    user_response = supabase_client.auth.get_user()
-                    if not user_response.user:
+                    # Get user ID from session state
+                    if not st.session_state.get('user_id'):
                         st.error("Please log in to generate outreach messages")
                         continue
                     
-                    recruiter_id = user_response.user.id
+                    recruiter_id = st.session_state.user_id
                     
                     # Check Supabase cache first
                     cached_data = supabase_client.get_cached_outreach(

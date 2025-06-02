@@ -27,25 +27,21 @@ def initialize_session_state():
 def get_user_profile():
     """Get user profile from Supabase with error handling"""
     try:
-        # Get the user's ID from auth.users
-        user_response = supabase.auth.get_user()
-        
-        if not user_response.user:
-            st.error("No user found in auth response")
+        # First check if we have a user_id in session state
+        if not st.session_state.get('user_id'):
+            print("❌ No user_id in session state")
             return None
-        
-        user_id = user_response.user.id
-        
-        # Get the profile data
-        profile_response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
+
+        # Get the profile data using the session state user_id
+        profile_response = supabase.table('user_profiles').select('*').eq('user_id', st.session_state.user_id).execute()
         
         if profile_response.data:
             return profile_response.data[0]
         
         # If no profile exists, create a default one
         default_profile = {
-            'user_id': user_id,
-            'full_name': user_response.user.email.split('@')[0],
+            'user_id': st.session_state.user_id,
+            'full_name': st.session_state.user_email.split('@')[0],
             'company': '',
             'role': '',
             'phone': '',
@@ -65,19 +61,18 @@ def get_user_profile():
             
     except Exception as e:
         st.error(f"Error fetching profile: {str(e)}")
+        print(f"❌ Profile error: {str(e)}")
         return None
 
 def update_user_profile(profile_data):
     """Update user profile in Supabase with error handling"""
     try:
-        # Get the user's ID from auth.users
-        user_response = supabase.auth.get_user()
-        
-        if not user_response.user:
-            st.error("No user found in auth response")
+        # Get the user's ID from session state
+        if not st.session_state.get('user_id'):
+            st.error("No user ID found in session")
             return False
         
-        user_id = user_response.user.id
+        user_id = st.session_state.user_id
         
         # Update the profile
         update_response = supabase.table('user_profiles').update(profile_data).eq('user_id', user_id).execute()
