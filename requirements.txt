@@ -1,6 +1,6 @@
 streamlit==1.32.0
 supabase-py==1.0.3
-python-dotenv==1.0.0
+python-dotenv
 httpx==0.24.1
 PyPDF2==3.0.1
 python-docx==1.1.0
