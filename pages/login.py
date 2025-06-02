@@ -56,10 +56,27 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
         # Create authenticated client with token
         supabase_authed = get_authed_supabase(access_token)
         
+        # Debug prints for auth context
+        print("🔑 Access Token (first 20 chars):", access_token[:20])
+        print("👤 user_id:", user_id)
+        
         # Check if profile exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
         if profile_response.data:
             print("✅ Profile already exists.")
+            # Test RLS with a dummy insert
+            print("🧪 Testing RLS with dummy insert...")
+            test_profile = {
+                'user_id': user_id,  # Using the same user_id to test RLS
+                'full_name': 'Test RLS',
+                'created_at': datetime.now(UTC).isoformat(),
+                'updated_at': datetime.now(UTC).isoformat()
+            }
+            try:
+                test_response = supabase_authed.table('user_profiles').insert(test_profile).execute()
+                print("✅ Test insert response:", test_response)
+            except Exception as e:
+                print("❌ Test insert failed:", str(e))
             return True
 
         # Create default profile
