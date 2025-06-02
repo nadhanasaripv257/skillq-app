@@ -1,45 +1,62 @@
 import streamlit as st
-from supabase import create_client, Client
 import os
-from dotenv import load_dotenv
-import tempfile
-import shutil
 from pathlib import Path
-import json
-from datetime import datetime
 import sys
-import concurrent.futures
-import multiprocessing
-from functools import lru_cache
-import time
 import logging
+from functools import lru_cache
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('resume_upload.log'),
-        logging.StreamHandler()
-    ]
-)
+# Configure logging only if not already configured
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,  # Changed to INFO to reduce logging overhead
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('resume_upload.log'),
+            logging.StreamHandler()
+        ]
+    )
 logger = logging.getLogger(__name__)
 
 # Add backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from backend.resume_processor import ResumeProcessor
-from backend.supabase_client import SupabaseClient
 
-# Load environment variables
-load_dotenv()
+# Lazy imports
+def get_supabase_client():
+    from backend.supabase_client import SupabaseClient
+    return SupabaseClient()
 
-# Initialize Supabase client
-supabase_client = SupabaseClient()
-
-# Initialize ResumeProcessor with caching
-@st.cache_resource(show_spinner=False)
 def get_resume_processor():
+    from backend.resume_processor import ResumeProcessor
     return ResumeProcessor()
+
+# Initialize session state
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'user_email' not in st.session_state:
+        st.session_state.user_email = None
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+    if 'upload_key' not in st.session_state:
+        st.session_state.upload_key = 0
+    if 'bulk_upload_key' not in st.session_state:
+        st.session_state.bulk_upload_key = 0
+    if 'supabase_client' not in st.session_state:
+        st.session_state.supabase_client = None
+    if 'resume_processor' not in st.session_state:
+        st.session_state.resume_processor = None
+
+# Cache the file uploader component
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_file_uploader(label, file_type, key_base, multiple=False):
+    """Helper function to create a file uploader with automatic reset capability"""
+    return st.file_uploader(
+        label,
+        type=file_type,
+        key=key_base,
+        accept_multiple_files=multiple
+    )
 
 def file_uploader_with_reset(label, file_type, key_base, multiple=False):
     """Helper function to create a file uploader with automatic reset capability"""
@@ -54,19 +71,6 @@ def file_uploader_with_reset(label, file_type, key_base, multiple=False):
     if reset_key in st.session_state:
         del st.session_state[reset_key]
     return uploader
-
-def initialize_session_state():
-    """Initialize session state variables"""
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    if 'user_email' not in st.session_state:
-        st.session_state.user_email = None
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = None
-    if 'upload_key' not in st.session_state:
-        st.session_state.upload_key = 0
-    if 'bulk_upload_key' not in st.session_state:
-        st.session_state.bulk_upload_key = 0
 
 def process_single_upload(file_content, file_name, user_id):
     """Process a single file upload with caching and error recovery"""
@@ -198,10 +202,18 @@ def main():
     
     # Check if user is authenticated
     if not st.session_state.get('authenticated', False):
-        st.warning("Please login to access this page")
-        if st.button("Go to Login"):
-            st.switch_page("pages/login.py")
+        st.warning("Please log in to access this page")
         return
+
+    # Lazy load Supabase client
+    if st.session_state.supabase_client is None:
+        with st.spinner("Initializing..."):
+            st.session_state.supabase_client = get_supabase_client()
+
+    # Lazy load ResumeProcessor
+    if st.session_state.resume_processor is None:
+        with st.spinner("Loading processor..."):
+            st.session_state.resume_processor = get_resume_processor()
 
     # Add back button at the top
     if st.button("← Back to Home"):
