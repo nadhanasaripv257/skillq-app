@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
+from datetime import datetime, UTC
 
 # Load environment variables
 load_dotenv()
@@ -24,26 +25,63 @@ def initialize_session_state():
         st.session_state.needs_verification = False
 
 def signup_user(email: str, password: str) -> bool:
-    """Attempt to sign up user with Supabase"""
+    """Sign up a user and create a profile in user_profiles"""
     try:
-        # Using the correct method for Supabase v1.2.0
+        # Sign up user
         response = supabase.auth.sign_up({
             "email": email,
             "password": password
         })
-        
-        # Check if we have a user in the response
+
         if hasattr(response, 'user') and response.user:
+            user_id = response.user.id
+            access_token = response.session.access_token if response.session else None
+
+            # Store session for redirect logic
             st.session_state.authenticated = True
             st.session_state.user_email = email
-            st.session_state.user_id = response.user.id
+            st.session_state.user_id = user_id
             st.session_state.needs_verification = True
-            return True
+
+            # If no token, just stop here — user must verify email
+            if not access_token:
+                st.info("Please check your email to verify your account before logging in.")
+                return True
+
+            # Authenticated Supabase client
+            supabase_authed = create_client(
+                os.environ.get("SUPABASE_URL"),
+                os.environ.get("SUPABASE_KEY")
+            )
+            supabase_authed.auth.set_session(access_token, refresh_token=None)
+
+            # Build profile
+            default_profile = {
+                'user_id': user_id,
+                'full_name': email.split('@')[0],
+                'company': '',
+                'role': '',
+                'phone': '',
+                'linkedin': '',
+                'created_at': datetime.now(UTC).isoformat(),
+                'updated_at': datetime.now(UTC).isoformat()
+            }
+
+            # Insert profile
+            insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
+            if insert_response.data:
+                print("✅ Profile created successfully.")
+                return True
+            else:
+                st.error("Signup succeeded, but profile creation failed.")
+                return False
         else:
-            st.error("Failed to create account")
+            st.error("Signup failed: No user returned.")
             return False
+
     except Exception as e:
         st.error(f"Signup failed: {str(e)}")
+        print("❌ Signup exception:", e)
         return False
 
 def main():

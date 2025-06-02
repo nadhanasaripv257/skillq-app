@@ -24,20 +24,23 @@ def initialize_session_state():
 
 def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
     """Create a user profile in Supabase if it doesn't exist"""
-
     try:
+        # Create authenticated client
         supabase_authed = create_client(
             os.environ.get("SUPABASE_URL"),
             os.environ.get("SUPABASE_KEY")
         )
+        
+        # Set the session with the access token
         supabase_authed.auth.set_session(access_token, refresh_token=None)
-
+        
         # Check if profile exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
         if profile_response.data:
             print("✅ Profile already exists.")
             return True
 
+        # Create default profile
         default_profile = {
             'user_id': user_id,
             'full_name': email.split('@')[0],
@@ -96,15 +99,21 @@ def main():
                     user_id = response.user.id
                     access_token = response.session.access_token
 
+                    # Set session state before profile creation
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = email
+                    st.session_state.user_id = user_id
+
                     if create_user_profile(user_id, email, access_token):
-                        st.session_state.authenticated = True
-                        st.session_state.user_email = email
-                        st.session_state.user_id = user_id
                         st.success("Login successful!")
                         st.switch_page("pages/home.py")
                     else:
                         print("❌ Failed to create profile")
                         st.error("Failed to create user profile. Please try again.")
+                        # Reset session state on failure
+                        st.session_state.authenticated = False
+                        st.session_state.user_email = None
+                        st.session_state.user_id = None
                 else:
                     print("❌ Login failed: Invalid credentials")
                     st.error("Invalid email or password")
