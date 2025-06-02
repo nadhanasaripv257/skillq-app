@@ -43,8 +43,15 @@ class PIIProcessor:
             # Ensure spaCy model is installed
             ensure_spacy_model()
             
-            # Create spaCy NLP engine
-            spacy_engine = SpacyNlpEngine({"models": {"en": SPACY_MODEL}})
+            # Create spaCy NLP engine with language code
+            spacy_engine = SpacyNlpEngine({
+                "models": [
+                    {
+                        "lang_code": "en",
+                        "model_name": SPACY_MODEL
+                    }
+                ]
+            })
             
             # Initialize Presidio analyzer and anonymizer
             self.analyzer = AnalyzerEngine(nlp_engine=spacy_engine)
