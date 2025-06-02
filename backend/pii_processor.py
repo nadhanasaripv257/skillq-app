@@ -6,21 +6,30 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 import spacy
 import re
+from functools import lru_cache
+import gc
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,  # Changed to INFO to reduce memory usage
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Load spaCy model with runtime download if needed
-try:
-    nlp = spacy.load("en_core_web_lg")
-except OSError:
-    from spacy.cli import download
-    download("en_core_web_lg")
-    nlp = spacy.load("en_core_web_lg")
+# Use the smallest model for minimal memory usage
+SPACY_MODEL = "en_core_web_sm"  # Changed to smallest model
+
+@lru_cache(maxsize=1)
+def get_spacy_model():
+    """Lazy load spaCy model with caching"""
+    try:
+        # Disable unnecessary pipeline components to save memory
+        return spacy.load(SPACY_MODEL, disable=['ner', 'parser', 'textcat'])
+    except OSError:
+        logger.info(f"Downloading {SPACY_MODEL} model...")
+        from spacy.cli import download
+        download(SPACY_MODEL)
+        return spacy.load(SPACY_MODEL, disable=['ner', 'parser', 'textcat'])
 
 class PIIProcessor:
     def __init__(self):
@@ -43,6 +52,9 @@ class PIIProcessor:
                 'bitbucket', 'jira', 'confluence', 'slack', 'teams', 'zoom', 'skype'
             }
             
+            # Load spaCy model lazily
+            self.nlp = None
+            
             # Patterns for detailed address detection
             self.address_patterns = [
                 r'\b\d+\s+[A-Za-z\s]+(?:Street|St|Road|Rd|Avenue|Ave|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way|Place|Pl)\b',
@@ -55,6 +67,18 @@ class PIIProcessor:
         except Exception as e:
             logger.error(f"Error initializing PII processor: {str(e)}")
             raise
+
+    def _ensure_nlp_loaded(self):
+        """Ensure spaCy model is loaded"""
+        if self.nlp is None:
+            self.nlp = get_spacy_model()
+
+    def _cleanup_memory(self):
+        """Clean up memory after processing"""
+        gc.collect()
+        if self.nlp is not None:
+            self.nlp = None
+            gc.collect()
 
     def is_valid_name(self, name: str) -> bool:
         """
@@ -186,11 +210,14 @@ class PIIProcessor:
             if detected_names:
                 pii_data['full_name'] = detected_names[0]
             
-            logger.debug(f"Extracted PII data: {pii_data}")
+            # Clean up memory
+            self._cleanup_memory()
+            
             return pii_data
             
         except Exception as e:
             logger.error(f"Error extracting PII: {str(e)}")
+            self._cleanup_memory()
             return {
                 'full_name': None,
                 'email': None,
