@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, UTC
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +35,26 @@ def get_user_profile(user_email):
         
         if profile_response.data:
             return profile_response.data[0]
+            
+        # If no profile exists, create one
+        try:
+            new_profile = {
+                'user_id': user_id,
+                'full_name': user_response.user.email.split('@')[0],  # Use email username as default name
+                'company': '',
+                'role': '',
+                'phone': '',
+                'linkedin': '',
+                'created_at': datetime.now(UTC).isoformat(),
+                'updated_at': datetime.now(UTC).isoformat()
+            }
+            
+            create_response = supabase.table('user_profiles').insert(new_profile).execute()
+            if create_response.data:
+                return create_response.data[0]
+        except Exception as create_error:
+            st.error(f"Error creating profile: {str(create_error)}")
+            
         return None
     except Exception as e:
         st.error(f"Error fetching profile: {str(e)}")

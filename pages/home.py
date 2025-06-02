@@ -7,15 +7,35 @@ import plotly.express as px
 from collections import Counter
 from functools import lru_cache
 import time
+from datetime import datetime, UTC
 
 # Load environment variables
 load_dotenv()
 
+# Check if environment variables are loaded
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_KEY")
+
+if not supabase_url or not supabase_key:
+    st.error("Missing Supabase credentials. Please check your environment variables.")
+    st.write("Debug - SUPABASE_URL:", supabase_url)
+    st.write("Debug - SUPABASE_KEY:", supabase_key[:10] + "..." if supabase_key else None)
+    st.stop()
+
 # Initialize Supabase client
 supabase: Client = create_client(
-    supabase_url=os.environ.get("SUPABASE_URL"),
-    supabase_key=os.environ.get("SUPABASE_KEY")
+    supabase_url=supabase_url,
+    supabase_key=supabase_key
 )
+
+# Test Supabase connection
+try:
+    test_response = supabase.auth.get_user()
+    st.write("Debug - Supabase Connection Test:", test_response)
+except Exception as e:
+    st.error(f"Error connecting to Supabase: {str(e)}")
+    st.write("Debug - Connection Error Details:", e)
+    st.stop()
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -36,19 +56,49 @@ def get_user_profile(refresh_key=None):
     try:
         # Get the user's ID from auth.users
         user_response = supabase.auth.get_user()
+        st.write("Debug - User Response:", user_response)  # Debug log
+        
         if not user_response.user:
+            st.error("No user found in auth response")
             return None
         
         user_id = user_response.user.id
+        st.write("Debug - User ID:", user_id)  # Debug log
         
         # Get the profile data
         profile_response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
+        st.write("Debug - Profile Response:", profile_response)  # Debug log
         
         if profile_response.data:
             return profile_response.data[0]
+        
+        # If no profile exists, create one
+        try:
+            new_profile = {
+                'user_id': user_id,
+                'full_name': user_response.user.email.split('@')[0],  # Use email username as default name
+                'company': '',
+                'role': '',
+                'phone': '',
+                'linkedin': '',
+                'created_at': datetime.now(UTC).isoformat(),
+                'updated_at': datetime.now(UTC).isoformat()
+            }
+            
+            st.write("Debug - Creating new profile:", new_profile)  # Debug log
+            create_response = supabase.table('user_profiles').insert(new_profile).execute()
+            st.write("Debug - Create Response:", create_response)  # Debug log
+            
+            if create_response.data:
+                return create_response.data[0]
+        except Exception as create_error:
+            st.error(f"Error creating profile: {str(create_error)}")
+            st.write("Debug - Create Error Details:", create_error)  # Debug log
+            
         return None
     except Exception as e:
         st.error(f"Error fetching profile: {str(e)}")
+        st.write("Debug - Main Error Details:", e)  # Debug log
         return None
 
 @st.cache_data(ttl=300, show_spinner=False)
