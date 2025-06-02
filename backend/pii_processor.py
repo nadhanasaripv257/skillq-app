@@ -8,6 +8,8 @@ import spacy
 import re
 from functools import lru_cache
 import gc
+import subprocess
+import sys
 
 # Configure logging
 logging.basicConfig(
@@ -19,24 +21,37 @@ logger = logging.getLogger(__name__)
 # Use the smallest model for minimal memory usage
 SPACY_MODEL = "en_core_web_sm"  # Changed to smallest model
 
+def ensure_spacy_model():
+    """Ensure the spaCy model is installed"""
+    try:
+        spacy.load(SPACY_MODEL)
+    except OSError:
+        logger.info(f"Downloading {SPACY_MODEL} model...")
+        subprocess.check_call([sys.executable, "-m", "spacy", "download", SPACY_MODEL])
+
 @lru_cache(maxsize=1)
 def get_spacy_model():
     """Lazy load spaCy model with caching"""
-    try:
-        # Disable unnecessary pipeline components to save memory
-        return spacy.load(SPACY_MODEL, disable=['ner', 'parser', 'textcat'])
-    except OSError:
-        logger.info(f"Downloading {SPACY_MODEL} model...")
-        from spacy.cli import download
-        download(SPACY_MODEL)
-        return spacy.load(SPACY_MODEL, disable=['ner', 'parser', 'textcat'])
+    ensure_spacy_model()
+    return spacy.load(SPACY_MODEL, disable=['ner', 'parser', 'textcat'])
 
 class PIIProcessor:
     def __init__(self):
         """Initialize the PII processor with Presidio"""
         try:
-            # Initialize NLP engine with spaCy
-            nlp_engine = NlpEngineProvider().create_engine()
+            # Ensure spaCy model is installed
+            ensure_spacy_model()
+            
+            # Configure NLP engine with spaCy
+            nlp_engine = NlpEngineProvider(
+                nlp_engines={
+                    "spacy": {
+                        "models": {
+                            "en": SPACY_MODEL
+                        }
+                    }
+                }
+            ).create_engine()
             
             # Initialize Presidio analyzer and anonymizer
             self.analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
