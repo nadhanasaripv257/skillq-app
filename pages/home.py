@@ -46,14 +46,20 @@ def get_user_profile(refresh_key=None):
         
         user_id = st.session_state.user_id
         
-        # Get the profile data
-        profile_response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
+        # Create service role client for profile management
+        supabase_admin = create_client(
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")  # Use service role key
+        )
+        
+        # Get the profile data using service role client
+        profile_response = supabase_admin.table('user_profiles').select('*').eq('user_id', user_id).execute()
         
         if profile_response.data:
             return profile_response.data[0]
         
-        # If no profile exists, return a default profile
-        return {
+        # If no profile exists, create a default profile
+        default_profile = {
             'user_id': user_id,
             'full_name': st.session_state.user_email.split('@')[0],
             'company': '',
@@ -63,6 +69,13 @@ def get_user_profile(refresh_key=None):
             'created_at': datetime.now(UTC).isoformat(),
             'updated_at': datetime.now(UTC).isoformat()
         }
+        
+        # Insert default profile using service role client
+        insert_response = supabase_admin.table('user_profiles').insert(default_profile).execute()
+        if insert_response.data:
+            return insert_response.data[0]
+        
+        return default_profile
     except Exception as e:
         st.error(f"Error fetching profile: {str(e)}")
         return None
