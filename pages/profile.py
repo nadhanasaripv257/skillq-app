@@ -19,83 +19,83 @@ def initialize_session_state():
         st.session_state.authenticated = False
     if 'user_email' not in st.session_state:
         st.session_state.user_email = None
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+    if 'profile_updated' not in st.session_state:
+        st.session_state.profile_updated = False
 
-def get_user_profile(user_email):
-    """Get user profile from Supabase"""
+def get_user_profile():
+    """Get user profile from Supabase with error handling"""
     try:
-        # First get the user's ID from auth.users
+        # Get the user's ID from auth.users
         user_response = supabase.auth.get_user()
+        
         if not user_response.user:
+            st.error("No user found in auth response")
             return None
         
         user_id = user_response.user.id
         
-        # Then get the profile data
+        # Get the profile data
         profile_response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
         
         if profile_response.data:
             return profile_response.data[0]
+        
+        # If no profile exists, create a default one
+        default_profile = {
+            'user_id': user_id,
+            'full_name': user_response.user.email.split('@')[0],
+            'company': '',
+            'role': '',
+            'phone': '',
+            'linkedin': '',
+            'created_at': datetime.now(UTC).isoformat(),
+            'updated_at': datetime.now(UTC).isoformat()
+        }
+        
+        # Insert the default profile
+        insert_response = supabase.table('user_profiles').insert(default_profile).execute()
+        
+        if insert_response.data:
+            return insert_response.data[0]
+        else:
+            st.error("Failed to create default profile")
+            return None
             
-        # If no profile exists, create one
-        try:
-            new_profile = {
-                'user_id': user_id,
-                'full_name': user_response.user.email.split('@')[0],  # Use email username as default name
-                'company': '',
-                'role': '',
-                'phone': '',
-                'linkedin': '',
-                'created_at': datetime.now(UTC).isoformat(),
-                'updated_at': datetime.now(UTC).isoformat()
-            }
-            
-            create_response = supabase.table('user_profiles').insert(new_profile).execute()
-            if create_response.data:
-                return create_response.data[0]
-        except Exception as create_error:
-            st.error(f"Error creating profile: {str(create_error)}")
-            
-        return None
     except Exception as e:
         st.error(f"Error fetching profile: {str(e)}")
         return None
 
-def save_user_profile(user_email, profile_data):
-    """Save user profile to Supabase"""
+def update_user_profile(profile_data):
+    """Update user profile in Supabase with error handling"""
     try:
         # Get the user's ID from auth.users
         user_response = supabase.auth.get_user()
+        
         if not user_response.user:
+            st.error("No user found in auth response")
             return False
         
         user_id = user_response.user.id
         
-        # Check if profile exists
-        existing_profile = get_user_profile(user_email)
+        # Update the profile
+        update_response = supabase.table('user_profiles').update(profile_data).eq('user_id', user_id).execute()
         
-        if existing_profile:
-            # Update existing profile
-            response = supabase.table('user_profiles').update({
-                'full_name': profile_data['full_name'],
-                'company': profile_data['company'],
-                'role': profile_data['role'],
-                'phone': profile_data['phone'],
-                'linkedin': profile_data['linkedin'],
-                'updated_at': datetime.utcnow().isoformat()
-            }).eq('user_id', user_id).execute()
+        if update_response.data:
+            st.session_state.profile_updated = True
+            return True
         else:
-            # Create new profile
-            profile_data['user_id'] = user_id
-            response = supabase.table('user_profiles').insert(profile_data).execute()
-        
-        return True
+            st.error("Failed to update profile")
+            return False
+            
     except Exception as e:
-        st.error(f"Error saving profile: {str(e)}")
+        st.error(f"Error updating profile: {str(e)}")
         return False
 
 def main():
     st.set_page_config(
-        page_title="SkillQ - Profile Settings",
+        page_title="SkillQ - Profile",
         page_icon="👤",
         layout="wide"
     )
@@ -103,58 +103,60 @@ def main():
     initialize_session_state()
     
     # Check if user is authenticated
-    if not st.session_state.authenticated:
+    if not st.session_state.get('authenticated', False):
         st.warning("Please login to access this page")
         if st.button("Go to Login"):
-            st.switch_page("login.py")
+            st.switch_page("pages/login.py")
         return
 
     # Add back button at the top
     if st.button("← Back to Home"):
+        st.session_state.page = "Home"
         st.switch_page("pages/home.py")
 
     st.title("👤 Profile Settings")
-    st.write(f"Welcome, {st.session_state.user_email}!")
+    st.write(f"Welcome, {st.session_state.get('user_email', 'User')}!")
 
-    # Get existing profile data
-    profile_data = get_user_profile(st.session_state.user_email)
+    # Get user profile
+    profile = get_user_profile()
     
-    # Create form for profile data
+    if not profile:
+        st.error("Error loading profile. Please try logging in again.")
+        if st.button("Go to Login"):
+            st.session_state.page = "Login"
+            st.switch_page("pages/login.py")
+        return
+
+    # Create form for profile update
     with st.form("profile_form"):
-        st.subheader("Update Your Profile")
+        full_name = st.text_input("Full Name", value=profile.get('full_name', ''))
+        company = st.text_input("Company", value=profile.get('company', ''))
+        role = st.text_input("Role", value=profile.get('role', ''))
+        phone = st.text_input("Phone", value=profile.get('phone', ''))
+        linkedin = st.text_input("LinkedIn Profile", value=profile.get('linkedin', ''))
         
-        # Initialize form fields with existing data or empty strings
-        full_name = st.text_input("Full Name", value=profile_data.get('full_name', '') if profile_data else '')
-        company = st.text_input("Company", value=profile_data.get('company', '') if profile_data else '')
-        role = st.text_input("Role", value=profile_data.get('role', '') if profile_data else '')
-        phone = st.text_input("Phone", value=profile_data.get('phone', '') if profile_data else '')
-        linkedin = st.text_input("LinkedIn Profile", value=profile_data.get('linkedin', '') if profile_data else '')
-        
-        # Submit button
-        submitted = st.form_submit_button("Save Profile")
+        submitted = st.form_submit_button("Update Profile")
         
         if submitted:
-            # Prepare profile data
             profile_data = {
                 'full_name': full_name,
                 'company': company,
                 'role': role,
                 'phone': phone,
-                'linkedin': linkedin
+                'linkedin': linkedin,
+                'updated_at': datetime.now(UTC).isoformat()
             }
             
-            # Save profile data
-            if save_user_profile(st.session_state.user_email, profile_data):
+            if update_user_profile(profile_data):
                 st.success("Profile updated successfully!")
-            else:
-                st.error("Failed to update profile. Please try again.")
+                st.rerun()
 
     # Add a logout button at the bottom
     st.markdown("---")
     if st.button("Logout"):
         st.session_state.authenticated = False
         st.session_state.user_email = None
-        st.switch_page("login.py")
+        st.switch_page("pages/login.py")
 
 if __name__ == "__main__":
     main() 
