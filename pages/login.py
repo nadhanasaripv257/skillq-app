@@ -25,8 +25,23 @@ def get_authed_supabase(access_token: str, refresh_token: str = None) -> Client:
             supabase_url=os.environ.get("SUPABASE_URL"),
             supabase_key=os.environ.get("SUPABASE_KEY")
         )
+        
         # Set the session with both access token and refresh token
         client.auth.set_session(access_token, refresh_token or access_token)
+        
+        # Set the auth header for subsequent requests
+        client.auth.headers = {
+            "Authorization": f"Bearer {access_token}",  # critical for RLS
+            "apikey": os.environ.get("SUPABASE_KEY")
+        }
+        
+        # Test auth.uid() recognition
+        try:
+            test_response = client.table('user_profiles').select('auth.uid()').execute()
+            print("🔍 Auth.uid() test response:", test_response)
+        except Exception as e:
+            print("⚠️ Auth.uid() test failed:", str(e))
+        
         return client
     except Exception as e:
         logger.error(f"Error creating authenticated client: {str(e)}")
@@ -44,9 +59,12 @@ def initialize_session_state():
 def create_user_profile(user_id: str, email: str, access_token: str, refresh_token: str = None) -> bool:
     """Create a user profile in Supabase if it doesn't exist"""
     try:
-        print(f"🔧 Creating authenticated client for user: {user_id}")
-        # Create authenticated client with token
-        supabase_authed = get_authed_supabase(access_token, refresh_token)
+        print(f"🔧 Creating service role client for user: {user_id}")
+        # Create service role client for profile creation
+        supabase_admin = create_client(
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")  # Use service role key
+        )
         
         # Debug prints for auth context
         print("🔑 Access Token (first 20 chars):", access_token[:20])
@@ -54,28 +72,15 @@ def create_user_profile(user_id: str, email: str, access_token: str, refresh_tok
             print("🔄 Refresh Token (first 20 chars):", refresh_token[:20])
         print("👤 user_id:", user_id)
         
-        # Check if profile exists
-        profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
+        # Check if profile exists using service role client
+        profile_response = supabase_admin.table('user_profiles').select('*').eq('user_id', user_id).execute()
         print("🔍 Profile check response:", profile_response)
         
         if profile_response and hasattr(profile_response, 'data') and profile_response.data:
             print("✅ Profile already exists.")
-            # Test RLS with a dummy insert
-            print("🧪 Testing RLS with dummy insert...")
-            test_profile = {
-                'user_id': user_id,  # Using the same user_id to test RLS
-                'full_name': 'Test RLS',
-                'created_at': datetime.now(UTC).isoformat(),
-                'updated_at': datetime.now(UTC).isoformat()
-            }
-            try:
-                test_response = supabase_authed.table('user_profiles').insert(test_profile).execute()
-                print("✅ Test insert response:", test_response)
-            except Exception as e:
-                print("❌ Test insert failed:", str(e))
             return True
 
-        # Create default profile
+        # Create default profile using service role client
         default_profile = {
             'user_id': user_id,
             'full_name': email.split('@')[0],
@@ -87,8 +92,8 @@ def create_user_profile(user_id: str, email: str, access_token: str, refresh_tok
             'updated_at': datetime.now(UTC).isoformat()
         }
 
-        print("🔧 Attempting to insert profile...")
-        insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
+        print("🔧 Attempting to insert profile with service role...")
+        insert_response = supabase_admin.table('user_profiles').insert(default_profile).execute()
         print("✅ Insert response:", insert_response)
         
         if insert_response and hasattr(insert_response, 'data') and insert_response.data:
