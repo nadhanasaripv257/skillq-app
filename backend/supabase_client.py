@@ -17,7 +17,7 @@ class SupabaseClient:
     def __init__(self):
         logger.info("Initializing SupabaseClient")
         try:
-            # Create client with synchronous configuration
+            # Create client with the token in the headers
             self.client: Client = create_client(
                 supabase_url=os.getenv("SUPABASE_URL"),
                 supabase_key=os.getenv("SUPABASE_KEY")
@@ -29,6 +29,28 @@ class SupabaseClient:
             logger.error(f"Failed to initialize Supabase client: {str(e)}", exc_info=True)
             raise
         self._local_cache = {}
+
+    def get_authed_client(self, access_token: str) -> Client:
+        """Create an authenticated client with the given access token"""
+        try:
+            client = create_client(
+                supabase_url=os.getenv("SUPABASE_URL"),
+                supabase_key=os.getenv("SUPABASE_KEY")
+            )
+            # Set the auth header
+            client.auth.set_session(access_token, "")
+            # Override the postgrest client to include the auth token
+            client.postgrest = PostgrestClient(
+                f"{os.getenv('SUPABASE_URL')}/rest/v1",
+                headers={
+                    "apikey": os.getenv("SUPABASE_KEY"),
+                    "Authorization": f"Bearer {access_token}"
+                }
+            )
+            return client
+        except Exception as e:
+            logger.error(f"Error creating authenticated client: {str(e)}")
+            raise
 
     def table(self, table_name: str):
         """Expose the table method from the underlying Supabase client"""

@@ -27,6 +27,14 @@ def get_authed_supabase(access_token: str) -> Client:
         )
         # Set the auth header
         client.auth.set_session(access_token, "")
+        # Override the postgrest client to include the auth token
+        client.postgrest = PostgrestClient(
+            f"{os.environ.get('SUPABASE_URL')}/rest/v1",
+            headers={
+                "apikey": os.environ.get("SUPABASE_KEY"),
+                "Authorization": f"Bearer {access_token}"
+            }
+        )
         return client
     except Exception as e:
         logger.error(f"Error creating authenticated client: {str(e)}")
