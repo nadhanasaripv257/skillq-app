@@ -43,7 +43,6 @@ def get_user_profile(refresh_key=None):
         user_response = supabase.auth.get_user()
         
         if not user_response.user:
-            st.error("No user found in auth response")
             return None
         
         user_id = user_response.user.id
@@ -280,17 +279,13 @@ def main():
     # Debug information after page config
     if not supabase_url or not supabase_key:
         st.error("Missing Supabase credentials. Please check your environment variables.")
-        st.write("Debug - SUPABASE_URL:", supabase_url)
-        st.write("Debug - SUPABASE_KEY:", supabase_key[:10] + "..." if supabase_key else None)
         st.stop()
 
     # Test Supabase connection
     try:
-        test_response = supabase.auth.get_user()
-        st.write("Debug - Supabase Connection Test:", test_response)
+        supabase.auth.get_user()
     except Exception as e:
         st.error(f"Error connecting to Supabase: {str(e)}")
-        st.write("Debug - Connection Error Details:", e)
         st.stop()
     
     # Initialize session state
