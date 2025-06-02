@@ -44,15 +44,15 @@ def create_user_profile(user_id: str, email: str) -> bool:
             'updated_at': datetime.now(UTC).isoformat()
         }
         
-        # Use upsert to handle potential race conditions
-        insert_response = supabase.table('user_profiles').upsert(
-            default_profile,
-            on_conflict='user_id'  # This will update if user_id exists
-        ).execute()
+        # Insert new profile
+        insert_response = supabase.table('user_profiles').insert(default_profile).execute()
         
         return bool(insert_response.data)
         
     except Exception as e:
+        # If the error is due to duplicate key, that's fine - profile exists
+        if hasattr(e, 'code') and e.code == '23505':  # PostgreSQL unique violation error code
+            return True
         st.error(f"Error managing user profile: {str(e)}")
         return False
 
