@@ -4,6 +4,7 @@ import logging
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
+from presidio_analyzer.nlp_engine.spacy_nlp_engine import SpacyNlpEngine
 import spacy
 import re
 from functools import lru_cache
@@ -42,19 +43,11 @@ class PIIProcessor:
             # Ensure spaCy model is installed
             ensure_spacy_model()
             
-            # Configure NLP engine with spaCy
-            nlp_engine = NlpEngineProvider(
-                nlp_engines={
-                    "spacy": {
-                        "models": {
-                            "en": SPACY_MODEL
-                        }
-                    }
-                }
-            ).create_engine()
+            # Create spaCy NLP engine
+            spacy_engine = SpacyNlpEngine({"models": {"en": SPACY_MODEL}})
             
             # Initialize Presidio analyzer and anonymizer
-            self.analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
+            self.analyzer = AnalyzerEngine(nlp_engine=spacy_engine)
             self.anonymizer = AnonymizerEngine()
             
             # Common false positives for name detection
