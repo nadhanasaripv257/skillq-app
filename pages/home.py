@@ -46,10 +46,16 @@ def get_user_profile(refresh_key=None):
         
         user_id = st.session_state.user_id
         
-        # Create service role client for profile management
+        # Create service role client with explicit headers
         supabase_admin = create_client(
             supabase_url=os.environ.get("SUPABASE_URL"),
-            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")  # Use service role key
+            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+            options={
+                "headers": {
+                    "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+                    "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
+                }
+            }
         )
         
         # Get the profile data using service role client

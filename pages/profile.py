@@ -32,8 +32,20 @@ def get_user_profile():
             print("❌ No user_id in session state")
             return None
 
+        # Create service role client with explicit headers
+        supabase_admin = create_client(
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+            options={
+                "headers": {
+                    "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+                    "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
+                }
+            }
+        )
+
         # Get the profile data using the session state user_id
-        profile_response = supabase.table('user_profiles').select('*').eq('user_id', st.session_state.user_id).execute()
+        profile_response = supabase_admin.table('user_profiles').select('*').eq('user_id', st.session_state.user_id).execute()
         
         if profile_response.data:
             return profile_response.data[0]
@@ -50,8 +62,8 @@ def get_user_profile():
             'updated_at': datetime.now(UTC).isoformat()
         }
         
-        # Insert the default profile
-        insert_response = supabase.table('user_profiles').insert(default_profile).execute()
+        # Insert the default profile using service role client
+        insert_response = supabase_admin.table('user_profiles').insert(default_profile).execute()
         
         if insert_response.data:
             return insert_response.data[0]
@@ -74,8 +86,20 @@ def update_user_profile(profile_data):
         
         user_id = st.session_state.user_id
         
-        # Update the profile
-        update_response = supabase.table('user_profiles').update(profile_data).eq('user_id', user_id).execute()
+        # Create service role client with explicit headers
+        supabase_admin = create_client(
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+            options={
+                "headers": {
+                    "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+                    "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
+                }
+            }
+        )
+        
+        # Update the profile using service role client
+        update_response = supabase_admin.table('user_profiles').update(profile_data).eq('user_id', user_id).execute()
         
         if update_response.data:
             st.session_state.profile_updated = True
