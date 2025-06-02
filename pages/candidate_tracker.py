@@ -11,8 +11,8 @@ load_dotenv()
 
 # Initialize Supabase client
 supabase: Client = create_client(
-    supabase_url=st.secrets["SUPABASE_URL"],
-    supabase_key=st.secrets["SUPABASE_KEY"]
+    supabase_url=os.environ.get("SUPABASE_URL"),
+    supabase_key=os.environ.get("SUPABASE_KEY")
 )
 
 def initialize_session_state():
