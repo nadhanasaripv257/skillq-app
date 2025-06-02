@@ -24,45 +24,30 @@ def initialize_session_state():
 
 def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
     """Create a user profile in Supabase if it doesn't exist"""
+
     try:
-        print(f"🔍 Creating profile for user: {user_id}")
-        
-        # Create authenticated client with session token
-        supabase_authed: Client = create_client(
+        # Recreate the client with Authorization header
+        supabase_authed = create_client(
             os.environ.get("SUPABASE_URL"),
             os.environ.get("SUPABASE_KEY"),
-            options={"global": {"headers": {"Authorization": f"Bearer {access_token}"}}}
+            options={
+                "global": {
+                    "headers": {
+                        "Authorization": f"Bearer {access_token}"
+                    }
+                }
+            }
         )
-        
-        # Verify session state
-        try:
-            session = supabase_authed.auth.get_session()
-            print(f"📝 Current session: {session}")
-            if session:
-                print(f"👤 Session user ID: {session.user.id}")
-                print(f"🔑 Session access token exists: {bool(session.access_token)}")
-        except Exception as session_error:
-            print(f"⚠️ Session check failed: {str(session_error)}")
-        
-        # Call debug_auth_uid() to verify the authenticated user ID
-        try:
-            uid_result = supabase_authed.rpc("debug_auth_uid").execute()
-            print(f"🔐 auth.uid() on backend: {uid_result.data}")
-            if uid_result.data is None:
-                print("⚠️ Warning: auth.uid() returned None - session may be broken or using service role key")
-        except Exception as uid_error:
-            print(f"⚠️ debug_auth_uid() call failed: {str(uid_error)}")
-        
+
         # Check if profile already exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
-        
         if profile_response.data:
-            print(f"✅ Profile already exists for user: {user_id}")
+            print("✅ Profile already exists.")
             return True
-        
-        # Profile doesn't exist, create new one
+
+        # Create profile
         default_profile = {
-            'user_id': user_id,  # This must exactly match auth.uid()
+            'user_id': user_id,
             'full_name': email.split('@')[0],
             'company': '',
             'role': '',
@@ -71,26 +56,15 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
             'created_at': datetime.now(UTC).isoformat(),
             'updated_at': datetime.now(UTC).isoformat()
         }
-        
-        print(f"📝 Attempting to create profile: {default_profile}")
-        
-        # Insert new profile using authenticated client
+
+        print("🔧 Attempting to insert profile with session auth...")
         insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
-        
-        if insert_response.data:
-            print(f"✅ Profile created successfully for user: {user_id}")
-        else:
-            print(f"❌ Profile creation failed: {insert_response.error}")
-        
+        print("✅ Insert response:", insert_response)
         return bool(insert_response.data)
-        
+
     except Exception as e:
-        # If the error is due to duplicate key, that's fine - profile exists
-        if hasattr(e, 'code') and e.code == '23505':  # PostgreSQL unique violation error code
-            print(f"ℹ️ Profile already exists (caught by exception) for user: {user_id}")
-            return True
-        print(f"🔥 Error managing user profile: {str(e)}")
         st.error(f"Error managing user profile: {str(e)}")
+        print("❌ Full error details:\n", e)
         return False
 
 def main():
@@ -127,37 +101,13 @@ def main():
                 
                 if response.user:
                     print(f"✅ Login successful. User ID: {response.user.id}")
-                    
-                    # Create authenticated client with session token
-                    session = response.session
-                    supabase_authed: Client = create_client(
-                        os.environ.get("SUPABASE_URL"),
-                        os.environ.get("SUPABASE_KEY"),
-                        options={"global": {"headers": {"Authorization": f"Bearer {session.access_token}"}}}
-                    )
-                    
-                    # Verify session immediately after login
-                    try:
-                        session = supabase_authed.auth.get_session()
-                        print(f"📝 Session after login: {session}")
-                        if session:
-                            print(f"👤 Session user ID: {session.user.id}")
-                            print(f"🔑 Session access token exists: {bool(session.access_token)}")
-                            
-                            # Call debug_auth_uid() immediately after login
-                            uid_result = supabase_authed.rpc("debug_auth_uid").execute()
-                            print(f"🔐 auth.uid() after login: {uid_result.data}")
-                            if uid_result.data is None:
-                                print("⚠️ Warning: auth.uid() returned None after login - session may be broken")
-                    except Exception as session_error:
-                        print(f"⚠️ Session check failed: {str(session_error)}")
-                    
-                    # Create user profile with authenticated client
-                    if create_user_profile(response.user.id, email, session.access_token):
-                        print("✅ Profile check/creation successful")
+                    user_id = response.user.id
+                    access_token = response.session.access_token
+
+                    if create_user_profile(user_id, email, access_token):
                         st.session_state.authenticated = True
                         st.session_state.user_email = email
-                        st.session_state.user_id = response.user.id
+                        st.session_state.user_id = user_id
                         st.success("Login successful!")
                         st.switch_page("pages/home.py")
                     else:
