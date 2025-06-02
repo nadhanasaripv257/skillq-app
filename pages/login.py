@@ -35,6 +35,8 @@ def get_authed_supabase(access_token: str) -> Client:
                 "Authorization": f"Bearer {access_token}"
             }
         )
+        # Ensure we're using the synchronous client
+        client.postgrest.schema = "public"
         return client
     except Exception as e:
         logger.error(f"Error creating authenticated client: {str(e)}")
@@ -62,7 +64,9 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
         
         # Check if profile exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
-        if profile_response.data:
+        print("🔍 Profile check response:", profile_response)
+        
+        if profile_response and hasattr(profile_response, 'data') and profile_response.data:
             print("✅ Profile already exists.")
             # Test RLS with a dummy insert
             print("🧪 Testing RLS with dummy insert...")
@@ -95,7 +99,7 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
         insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
         print("✅ Insert response:", insert_response)
         
-        if insert_response.data:
+        if insert_response and hasattr(insert_response, 'data') and insert_response.data:
             print("✅ Profile created successfully")
             return True
         else:
