@@ -25,18 +25,8 @@ def get_authed_supabase(access_token: str) -> Client:
             supabase_url=os.environ.get("SUPABASE_URL"),
             supabase_key=os.environ.get("SUPABASE_KEY")
         )
-        # Set the auth header
-        client.auth.set_session(access_token, "")
-        # Override the postgrest client to include the auth token
-        client.postgrest = PostgrestClient(
-            f"{os.environ.get('SUPABASE_URL')}/rest/v1",
-            headers={
-                "apikey": os.environ.get("SUPABASE_KEY"),
-                "Authorization": f"Bearer {access_token}"
-            }
-        )
-        # Ensure we're using the synchronous client
-        client.postgrest.schema = "public"
+        # Set the session with both access token and refresh token
+        client.auth.set_session(access_token, access_token)  # Using access token as refresh token temporarily
         return client
     except Exception as e:
         logger.error(f"Error creating authenticated client: {str(e)}")
