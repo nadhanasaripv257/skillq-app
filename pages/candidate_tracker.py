@@ -12,8 +12,14 @@ load_dotenv()
 # Initialize Supabase client
 supabase: Client = create_client(
     supabase_url=os.environ.get("SUPABASE_URL"),
-    supabase_key=os.environ.get("SUPABASE_KEY")
+    supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 )
+
+# Set the headers explicitly
+supabase.postgrest.headers = {
+    "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+    "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
+}
 
 def initialize_session_state():
     """Initialize session state variables"""

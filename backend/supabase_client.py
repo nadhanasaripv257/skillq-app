@@ -17,11 +17,18 @@ class SupabaseClient:
     def __init__(self):
         logger.info("Initializing SupabaseClient")
         try:
-            # Create client with the token in the headers
+            # Create client with the service role key
             self.client: Client = create_client(
                 supabase_url=os.getenv("SUPABASE_URL"),
-                supabase_key=os.getenv("SUPABASE_KEY")
+                supabase_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY")
             )
+            
+            # Set the headers explicitly
+            self.client.postgrest.headers = {
+                "apikey": os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
+                "Authorization": f"Bearer {os.getenv('SUPABASE_SERVICE_ROLE_KEY')}"
+            }
+            
             # Extract project reference from Supabase URL
             self.project_ref = os.getenv("SUPABASE_URL").split("//")[1].split(".")[0]
             logger.info("Successfully initialized Supabase client")
@@ -35,7 +42,7 @@ class SupabaseClient:
         try:
             client = create_client(
                 supabase_url=os.getenv("SUPABASE_URL"),
-                supabase_key=os.getenv("SUPABASE_KEY")
+                supabase_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY")
             )
             # Set the auth header
             client.auth.set_session(access_token, "")
@@ -43,7 +50,7 @@ class SupabaseClient:
             client.postgrest = PostgrestClient(
                 f"{os.getenv('SUPABASE_URL')}/rest/v1",
                 headers={
-                    "apikey": os.getenv("SUPABASE_KEY"),
+                    "apikey": os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
                     "Authorization": f"Bearer {access_token}"
                 }
             )
