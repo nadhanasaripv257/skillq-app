@@ -1,5 +1,6 @@
 import os
 from supabase import create_client, Client
+from postgrest import PostgrestClient
 from typing import Dict, Optional, List
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ class SupabaseClient:
     def __init__(self):
         logger.info("Initializing SupabaseClient")
         try:
+            # Create client with synchronous configuration
             self.client: Client = create_client(
                 supabase_url=os.getenv("SUPABASE_URL"),
                 supabase_key=os.getenv("SUPABASE_KEY")

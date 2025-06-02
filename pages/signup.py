@@ -4,6 +4,7 @@ from postgrest import PostgrestClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime, UTC
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -14,18 +15,22 @@ supabase: Client = create_client(
     supabase_key=os.environ.get("SUPABASE_KEY")
 )
 
+logger = logging.getLogger(__name__)
+
 def get_authed_supabase(access_token: str) -> Client:
-    """Create an authenticated Supabase client with the given access token"""
-    client = create_client(
-        os.environ.get("SUPABASE_URL"),
-        os.environ.get("SUPABASE_KEY")
-    )
-    # Inject the token manually into the postgrest client
-    client.postgrest = PostgrestClient(
-        f"{os.environ.get('SUPABASE_URL')}/rest/v1",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    return client
+    """Create an authenticated Supabase client using the access token"""
+    try:
+        # Create client with the token in the headers
+        client = create_client(
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_key=os.environ.get("SUPABASE_KEY")
+        )
+        # Set the auth header
+        client.auth.set_session(access_token, "")
+        return client
+    except Exception as e:
+        logger.error(f"Error creating authenticated client: {str(e)}")
+        raise
 
 def initialize_session_state():
     """Initialize session state variables"""

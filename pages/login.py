@@ -4,6 +4,7 @@ from postgrest import PostgrestClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime, UTC
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -14,18 +15,22 @@ supabase: Client = create_client(
     supabase_key=os.environ.get("SUPABASE_KEY")
 )
 
+logger = logging.getLogger(__name__)
+
 def get_authed_supabase(access_token: str) -> Client:
-    """Create an authenticated Supabase client with the given access token"""
-    client = create_client(
-        os.environ.get("SUPABASE_URL"),
-        os.environ.get("SUPABASE_KEY")
-    )
-    # Inject the token manually into the postgrest client
-    client.postgrest = PostgrestClient(
-        f"{os.environ.get('SUPABASE_URL')}/rest/v1",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    return client
+    """Create an authenticated Supabase client using the access token"""
+    try:
+        # Create client with the token in the headers
+        client = create_client(
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_key=os.environ.get("SUPABASE_KEY")
+        )
+        # Set the auth header
+        client.auth.set_session(access_token, "")
+        return client
+    except Exception as e:
+        logger.error(f"Error creating authenticated client: {str(e)}")
+        raise
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -64,7 +69,13 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
         print("🔧 Attempting to insert profile...")
         insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
         print("✅ Insert response:", insert_response)
-        return bool(insert_response.data)
+        
+        if insert_response.data:
+            print("✅ Profile created successfully")
+            return True
+        else:
+            print("❌ Profile creation failed - no data returned")
+            return False
 
     except Exception as e:
         st.error(f"Error managing user profile: {str(e)}")
@@ -103,32 +114,44 @@ def main():
                     "password": password
                 })
                 
-                if response.user:
-                    print(f"✅ Login successful. User ID: {response.user.id}")
-                    user_id = response.user.id
-                    access_token = response.session.access_token
-
-                    # Set session state before profile creation
-                    st.session_state.authenticated = True
-                    st.session_state.user_email = email
-                    st.session_state.user_id = user_id
-
-                    if create_user_profile(user_id, email, access_token):
-                        st.success("Login successful!")
-                        st.switch_page("pages/home.py")
-                    else:
-                        print("❌ Failed to create profile")
-                        st.error("Failed to create user profile. Please try again.")
-                        # Reset session state on failure
-                        st.session_state.authenticated = False
-                        st.session_state.user_email = None
-                        st.session_state.user_id = None
-                else:
-                    print("❌ Login failed: Invalid credentials")
+                # Debug logging
+                print("🧪 Full login response:", response)
+                print("🧪 Response type:", type(response))
+                
+                # Defensive null checking
+                if response is None or response.user is None or response.session is None:
+                    print("❌ Login failed: Incomplete response")
                     st.error("Invalid email or password")
+                    return
+                
+                user_id = response.user.id
+                access_token = response.session.access_token
+                
+                print(f"✅ Login successful. User ID: {user_id}")
+                
+                # Set session state before profile creation
+                st.session_state.authenticated = True
+                st.session_state.user_email = email
+                st.session_state.user_id = user_id
+
+                if create_user_profile(user_id, email, access_token):
+                    st.success("Login successful!")
+                    st.switch_page("pages/home.py")
+                else:
+                    print("❌ Failed to create profile")
+                    st.error("Failed to create user profile. Please try again.")
+                    # Reset session state on failure
+                    st.session_state.authenticated = False
+                    st.session_state.user_email = None
+                    st.session_state.user_id = None
+                    
             except Exception as e:
                 print(f"🔥 Login exception: {e}")
                 st.error(f"Login failed: {str(e)}")
+                # Reset session state on error
+                st.session_state.authenticated = False
+                st.session_state.user_email = None
+                st.session_state.user_id = None
     
     # Add signup link
     st.markdown("---")
