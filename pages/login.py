@@ -17,7 +17,7 @@ supabase: Client = create_client(
 
 logger = logging.getLogger(__name__)
 
-def get_authed_supabase(access_token: str) -> Client:
+def get_authed_supabase(access_token: str, refresh_token: str = None) -> Client:
     """Create an authenticated Supabase client using the access token"""
     try:
         # Create client with the token in the headers
@@ -26,7 +26,7 @@ def get_authed_supabase(access_token: str) -> Client:
             supabase_key=os.environ.get("SUPABASE_KEY")
         )
         # Set the session with both access token and refresh token
-        client.auth.set_session(access_token, access_token)  # Using access token as refresh token temporarily
+        client.auth.set_session(access_token, refresh_token or access_token)
         return client
     except Exception as e:
         logger.error(f"Error creating authenticated client: {str(e)}")
@@ -41,15 +41,17 @@ def initialize_session_state():
     if 'user_id' not in st.session_state:
         st.session_state.user_id = None
 
-def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
+def create_user_profile(user_id: str, email: str, access_token: str, refresh_token: str = None) -> bool:
     """Create a user profile in Supabase if it doesn't exist"""
     try:
         print(f"🔧 Creating authenticated client for user: {user_id}")
         # Create authenticated client with token
-        supabase_authed = get_authed_supabase(access_token)
+        supabase_authed = get_authed_supabase(access_token, refresh_token)
         
         # Debug prints for auth context
         print("🔑 Access Token (first 20 chars):", access_token[:20])
+        if refresh_token:
+            print("🔄 Refresh Token (first 20 chars):", refresh_token[:20])
         print("👤 user_id:", user_id)
         
         # Check if profile exists
@@ -145,6 +147,7 @@ def main():
                 
                 user_id = response.user.id
                 access_token = response.session.access_token
+                refresh_token = response.session.refresh_token
                 
                 print(f"✅ Login successful. User ID: {user_id}")
                 
@@ -153,7 +156,7 @@ def main():
                 st.session_state.user_email = email
                 st.session_state.user_id = user_id
 
-                if create_user_profile(user_id, email, access_token):
+                if create_user_profile(user_id, email, access_token, refresh_token):
                     st.success("Login successful!")
                     st.switch_page("pages/home.py")
                 else:
