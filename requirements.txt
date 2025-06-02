@@ -5,11 +5,8 @@ httpx==0.23.3
 PyPDF2==3.0.1
 python-docx==1.1.0
 openai==1.12.0
-fpdf==1.7.2
 pandas==2.2.1
 plotly==5.19.0
-wordcloud==1.9.3
-matplotlib==3.8.3
 presidio-analyzer==2.2.29
 presidio-anonymizer==2.2.29
 spacy==3.7.2
