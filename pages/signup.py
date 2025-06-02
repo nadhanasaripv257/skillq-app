@@ -27,6 +27,8 @@ def initialize_session_state():
 def signup_user(email: str, password: str) -> bool:
     """Sign up a user and create a profile in user_profiles"""
     try:
+        print(f"🔧 Starting signup process for: {email}")
+        
         # Sign up user
         response = supabase.auth.sign_up({
             "email": email,
@@ -36,6 +38,7 @@ def signup_user(email: str, password: str) -> bool:
         if hasattr(response, 'user') and response.user:
             user_id = response.user.id
             access_token = response.session.access_token if response.session else None
+            print(f"✅ User created with ID: {user_id}")
 
             # Store session for redirect logic
             st.session_state.authenticated = True
@@ -45,15 +48,18 @@ def signup_user(email: str, password: str) -> bool:
 
             # If no token, just stop here — user must verify email
             if not access_token:
+                print("ℹ️ No access token - user needs to verify email")
                 st.info("Please check your email to verify your account before logging in.")
                 return True
 
+            print("🔧 Creating authenticated client...")
             # Authenticated Supabase client
             supabase_authed = create_client(
                 os.environ.get("SUPABASE_URL"),
                 os.environ.get("SUPABASE_KEY")
             )
-            supabase_authed.auth.set_session(access_token, refresh_token=None)
+            supabase_authed.auth.set_session(access_token, refresh_token="")
+            print("✅ Session set successfully")
 
             # Build profile
             default_profile = {
@@ -67,21 +73,24 @@ def signup_user(email: str, password: str) -> bool:
                 'updated_at': datetime.now(UTC).isoformat()
             }
 
+            print("🔧 Attempting to insert profile...")
             # Insert profile
             insert_response = supabase_authed.table('user_profiles').insert(default_profile).execute()
             if insert_response.data:
                 print("✅ Profile created successfully.")
                 return True
             else:
+                print("❌ Profile creation failed")
                 st.error("Signup succeeded, but profile creation failed.")
                 return False
         else:
+            print("❌ Signup failed: No user returned")
             st.error("Signup failed: No user returned.")
             return False
 
     except Exception as e:
+        print(f"❌ Signup exception: {str(e)}")
         st.error(f"Signup failed: {str(e)}")
-        print("❌ Signup exception:", e)
         return False
 
 def main():
@@ -126,12 +135,6 @@ def main():
             else:
                 if signup_user(email, password):
                     st.rerun()
-    
-    # Add signup link
-    st.markdown("---")
-    st.write("Don't have an account?")
-    if st.button("Sign Up"):
-        st.switch_page("pages/signup.py")
 
     # Login link
     st.markdown("---")

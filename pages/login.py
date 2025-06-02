@@ -31,8 +31,8 @@ def create_user_profile(user_id: str, email: str, access_token: str) -> bool:
             os.environ.get("SUPABASE_KEY")
         )
         
-        # Set the session with the access token
-        supabase_authed.auth.set_session(access_token, refresh_token=None)
+        # Set the session with the access token and empty refresh token
+        supabase_authed.auth.set_session(access_token, refresh_token="")
         
         # Check if profile exists
         profile_response = supabase_authed.table('user_profiles').select('*').eq('user_id', user_id).execute()
