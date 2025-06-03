@@ -9,17 +9,19 @@ import time
 # Load environment variables
 load_dotenv()
 
-# Initialize Supabase client
-supabase: Client = create_client(
-    supabase_url=os.environ.get("SUPABASE_URL"),
-    supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-)
-
-# Set the headers explicitly
-supabase.postgrest.headers = {
-    "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
-    "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
-}
+# Initialize Supabase client with caching
+@st.cache_resource(max_entries=5)  # Limit to 5 instances
+def get_supabase_client():
+    client = create_client(
+        supabase_url=os.environ.get("SUPABASE_URL"),
+        supabase_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    )
+    # Set the headers explicitly
+    client.postgrest.headers = {
+        "apikey": os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+        "Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY')}"
+    }
+    return client
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -37,11 +39,16 @@ def initialize_session_state():
         st.session_state.selected_candidate = None
     if 'selected_candidates' not in st.session_state:
         st.session_state.selected_candidates = set()
+    if 'supabase_client' not in st.session_state:
+        st.session_state.supabase_client = None
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_contacted_candidates(recruiter_id, refresh_key=None, filter_date=None):
     """Get all contacted candidates with optional date filter"""
     try:
+        # Get Supabase client
+        supabase = st.session_state.supabase_client
+        
         # Base query for count
         count_query = supabase.table('recruiter_notes')\
             .select('id', count='exact')\
@@ -111,8 +118,12 @@ def main():
             st.switch_page("pages/login.py")
         return
 
+    # Lazy load Supabase client without displaying loading message
+    if st.session_state.supabase_client is None:
+        st.session_state.supabase_client = get_supabase_client()
+
     # Get user ID and profile
-    user_response = supabase.auth.get_user()
+    user_response = st.session_state.supabase_client.auth.get_user()
     if not user_response.user:
         st.error("Please log in to view candidate tracker")
         if st.button("Go to Login"):
@@ -311,7 +322,7 @@ def main():
                 # Debug: Show the data being sent to Supabase
                 st.write(f"Updating candidate {i+1} with data:", data)
                 
-                response = supabase.table('recruiter_notes')\
+                response = st.session_state.supabase_client.table('recruiter_notes')\
                     .update(data)\
                     .eq('id', candidates[i]['id'])\
                     .execute()
@@ -389,7 +400,7 @@ def main():
                                 'updated_at': datetime.now(UTC).isoformat()
                             }
                             
-                            response = supabase.table('recruiter_notes')\
+                            response = st.session_state.supabase_client.table('recruiter_notes')\
                                 .update(data)\
                                 .eq('id', selected_candidate_obj['id'])\
                                 .execute()
@@ -470,7 +481,7 @@ def main():
                             'updated_at': datetime.now(UTC).isoformat()
                         }
                         
-                        response = supabase.table('recruiter_notes')\
+                        response = st.session_state.supabase_client.table('recruiter_notes')\
                             .update(data)\
                             .eq('id', candidate['id'])\
                             .execute()

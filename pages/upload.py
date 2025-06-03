@@ -7,8 +7,9 @@ from functools import lru_cache
 import time
 import concurrent.futures
 import multiprocessing
+import gc
 
-# Configure logging for console only
+# Configure logging for console only with minimal overhead
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,13 @@ def get_session(key, default=None):
         st.session_state[key] = default
     return st.session_state[key]
 
-# Lazy imports with caching
-@st.cache_resource
+# Lazy imports with minimal caching
+@st.cache_resource(max_entries=5)  # Limit to 5 instances
 def get_supabase_client():
     from backend.supabase_client import SupabaseClient
     return SupabaseClient()
 
-@st.cache_resource
+@st.cache_resource(max_entries=5)  # Limit to 5 instances
 def get_resume_processor():
     from backend.resume_processor import ResumeProcessor
     return ResumeProcessor()
@@ -39,8 +40,8 @@ def initialize_session_state():
     get_session('user_email')
     get_session('user_id')
 
-# Cache the file uploader component with a shorter TTL
-@st.cache_data(ttl=300)  # Cache for 5 minutes since file uploaders don't need long caching
+# Cache the file uploader component with minimal caching
+@st.cache_data(ttl=300, max_entries=20)  # 5 minutes, max 20 entries
 def get_file_uploader(label, file_type, key_base, multiple=False):
     """Helper function to create a file uploader with automatic reset capability"""
     return st.file_uploader(
@@ -64,10 +65,19 @@ def file_uploader_with_reset(label, file_type, key_base, multiple=False):
         del st.session_state[reset_key]
     return uploader
 
-# Cache processed files with a shorter TTL and max size limit
-@st.cache_data(ttl=1800, max_entries=100)  # Cache for 30 minutes, max 100 entries
+# Process files in chunks to save memory
+def process_file_in_chunks(file_content, chunk_size=1024*1024):  # 1MB chunks
+    """Process file content in chunks to save memory"""
+    while True:
+        chunk = file_content.read(chunk_size)
+        if not chunk:
+            break
+        yield chunk
+
+# Cache processed files with strict limits
+@st.cache_data(ttl=1800, max_entries=50)  # 30 minutes, max 50 entries
 def process_single_upload(file_content, file_name, user_id):
-    """Process a single file upload with caching and error recovery"""
+    """Process a single file upload with memory-efficient processing"""
     max_retries = 3
     retry_count = 0
     
@@ -85,18 +95,27 @@ def process_single_upload(file_content, file_name, user_id):
             status_text.text("Reading file...")
             progress_bar.progress(25)
             
+            # Process content in chunks
+            processed_chunks = []
+            for chunk in process_file_in_chunks(file_content):
+                processed_chunks.append(chunk)
+            
             # Process content in parallel with progress updates
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 # Start the processing in a separate thread
-                future = executor.submit(processor.process_resume_content, file_content, file_name)
+                future = executor.submit(processor.process_resume_content, b''.join(processed_chunks), file_name)
                 
                 # Update progress while processing
                 while not future.done():
                     status_text.text("Processing content...")
                     progress_bar.progress(50)
-                    time.sleep(0.1)  # Reduced delay for smoother progress
+                    time.sleep(0.1)
                 
                 result = future.result()
+            
+            # Clear processed chunks to free memory
+            processed_chunks.clear()
+            gc.collect()
             
             status_text.text("Storing data...")
             progress_bar.progress(75)
@@ -117,10 +136,9 @@ def process_single_upload(file_content, file_name, user_id):
             backoff_time = min(2 ** retry_count, 10)  # Cap at 10 seconds
             time.sleep(backoff_time)
 
-# No caching for bulk upload as it's a one-time operation
 def process_bulk_upload(uploaded_files):
-    """Process multiple files in parallel with batch processing and memory optimization"""
-    batch_size = 5  # Reduced batch size for better memory management
+    """Process multiple files in parallel with memory optimization"""
+    batch_size = 3  # Reduced batch size for better memory management
     results = []
     total_files = len(uploaded_files)
     
@@ -143,7 +161,7 @@ def process_bulk_upload(uploaded_files):
         status_text.text(f"Processing batch {current_batch} of {total_batches}...")
         
         # Dynamically set max_workers based on CPU count and available memory
-        max_workers = min(len(batch), multiprocessing.cpu_count())  # Reduced worker count for better stability
+        max_workers = min(len(batch), multiprocessing.cpu_count() // 2)  # Use half the CPU cores
         logger.debug(f"Using {max_workers} worker threads for batch processing")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -176,6 +194,9 @@ def process_bulk_upload(uploaded_files):
                     logger.error(f"Error processing {file.name}: {str(e)}", exc_info=True)
                     st.error(f"Error processing {file.name}: {str(e)}")
         
+        # Force garbage collection after each batch
+        gc.collect()
+        
         # Update overall progress after batch completion
         progress = min(1.0, (i + len(batch)) / total_files)
         status_text.text(f"Completed batch {current_batch} of {total_batches}")
@@ -203,7 +224,7 @@ def main():
         st.warning("Please log in to access this page")
         return
 
-    # Lazy load Supabase client
+    # Lazy load Supabase client without displaying loading message
     supabase_client = get_session('supabase_client')
     if supabase_client is None:
         st.session_state.supabase_client = get_supabase_client()
@@ -229,11 +250,12 @@ def main():
         
         if uploaded_file:
             if st.button("Process Single Upload"):
-                result = process_single_upload(
-                    uploaded_file.getvalue(),
-                    uploaded_file.name,
-                    get_session('user_id')
-                )
+                with st.spinner("Processing your resume..."):
+                    result = process_single_upload(
+                        uploaded_file.getvalue(),
+                        uploaded_file.name,
+                        get_session('user_id')
+                    )
                 if result:
                     # Store success message in session state
                     get_session('upload_success', f"Successfully processed {uploaded_file.name}!")
@@ -253,21 +275,22 @@ def main():
         
         if uploaded_files:
             if st.button("Process Bulk Upload"):
-                results = process_bulk_upload(uploaded_files)
-                success_count = sum(1 for _, success in results if success)
-                
-                # Store success message in session state
-                get_session('bulk_upload_success', f"Successfully processed {success_count} out of {len(uploaded_files)} files")
-                st.success(get_session('bulk_upload_success'))
-                
-                # Show failed files if any
-                failed_files = [name for name, success in results if not success]
-                if failed_files:
-                    st.warning(f"Failed to process: {', '.join(failed_files)}")
-                
-                # Set reset flag for the uploader
-                get_session('reset_bulk_upload', True)
-                st.rerun()
+                with st.spinner("Processing your resumes..."):
+                    results = process_bulk_upload(uploaded_files)
+                    success_count = sum(1 for _, success in results if success)
+                    
+                    # Store success message in session state
+                    get_session('bulk_upload_success', f"Successfully processed {success_count} out of {len(uploaded_files)} files")
+                    st.success(get_session('bulk_upload_success'))
+                    
+                    # Show failed files if any
+                    failed_files = [name for name, success in results if not success]
+                    if failed_files:
+                        st.warning(f"Failed to process: {', '.join(failed_files)}")
+                    
+                    # Set reset flag for the uploader
+                    get_session('reset_bulk_upload', True)
+                    st.rerun()
 
     # Display any stored success messages
     upload_success = get_session('upload_success')

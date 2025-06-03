@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Initialize clients with caching
-@st.cache_resource
+@st.cache_resource(max_entries=5)  # Limit to 5 instances
 def get_supabase_client():
     from backend.supabase_client import SupabaseClient
     return SupabaseClient()
 
-@st.cache_resource
+@st.cache_resource(max_entries=5)  # Limit to 5 instances
 def get_openai_client():
     from backend.openai_client import OpenAIClient
     return OpenAIClient()
@@ -51,6 +51,10 @@ def initialize_session_state():
         st.session_state.outreach_count = {}
     if 'trigger_search' not in st.session_state:
         st.session_state.trigger_search = False
+    if 'supabase_client' not in st.session_state:
+        st.session_state.supabase_client = None
+    if 'openai_client' not in st.session_state:
+        st.session_state.openai_client = None
 
 @st.cache_data(ttl=3600)  # Cache skills for 1 hour
 def get_candidate_skills():
@@ -657,22 +661,20 @@ def main():
         layout="wide"
     )
     
-    # Reset on entry unless coming from rerun
-    if st.session_state.get("page_initialized") is not True:
-        st.session_state.search_results = None
-        st.session_state.last_query = None
-        st.session_state.current_filters = None
-        st.session_state.trigger_search = False
-        st.session_state.page_initialized = True
-    
     initialize_session_state()
     
     # Check if user is authenticated
     if not st.session_state.authenticated:
         st.warning("Please login to access this page")
         if st.button("Go to Login"):
-            st.switch_page("login.py")
+            st.switch_page("pages/login.py")
         return
+
+    # Lazy load clients without displaying loading message
+    if st.session_state.supabase_client is None:
+        st.session_state.supabase_client = get_supabase_client()
+    if st.session_state.openai_client is None:
+        st.session_state.openai_client = get_openai_client()
 
     # Add back button at the top
     if st.button("← Back to Home"):
