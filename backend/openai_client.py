@@ -4,13 +4,28 @@ from typing import Dict, List
 import json
 import time
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 class OpenAIClient:
     def __init__(self):
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
+        self._client = None
+        self._api_key = os.environ.get("OPENAI_API_KEY")
+        if not self._api_key:
             raise ValueError("OPENAI_API_KEY must be set in environment variables")
-        self.client = OpenAI(api_key=api_key)
+
+    @property
+    def client(self) -> OpenAI:
+        """Lazy load the OpenAI client"""
+        if self._client is None:
+            try:
+                self._client = OpenAI(api_key=self._api_key)
+                logger.info("Successfully initialized OpenAI client")
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+                raise
+        return self._client
 
     def parse_resume(self, resume_text: str) -> Dict:
         """

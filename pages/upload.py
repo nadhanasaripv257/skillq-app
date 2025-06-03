@@ -6,51 +6,41 @@ import logging
 from functools import lru_cache
 import time
 import concurrent.futures
+import multiprocessing
 
-# Configure logging only if not already configured
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=logging.INFO,  # Changed to INFO to reduce logging overhead
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler('resume_upload.log'),
-            logging.StreamHandler()
-        ]
-    )
+# Configure logging for console only
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Add backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-# Lazy imports
+def get_session(key, default=None):
+    """Helper function for lazy session state initialization"""
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return st.session_state[key]
+
+# Lazy imports with caching
+@st.cache_resource
 def get_supabase_client():
     from backend.supabase_client import SupabaseClient
     return SupabaseClient()
 
+@st.cache_resource
 def get_resume_processor():
     from backend.resume_processor import ResumeProcessor
     return ResumeProcessor()
 
 # Initialize session state
 def initialize_session_state():
-    """Initialize session state variables"""
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    if 'user_email' not in st.session_state:
-        st.session_state.user_email = None
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = None
-    if 'upload_key' not in st.session_state:
-        st.session_state.upload_key = 0
-    if 'bulk_upload_key' not in st.session_state:
-        st.session_state.bulk_upload_key = 0
-    if 'supabase_client' not in st.session_state:
-        st.session_state.supabase_client = None
-    if 'resume_processor' not in st.session_state:
-        st.session_state.resume_processor = None
+    """Initialize only essential session state variables"""
+    get_session('authenticated', False)
+    get_session('user_email')
+    get_session('user_id')
 
-# Cache the file uploader component
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+# Cache the file uploader component with a shorter TTL
+@st.cache_data(ttl=300)  # Cache for 5 minutes since file uploaders don't need long caching
 def get_file_uploader(label, file_type, key_base, multiple=False):
     """Helper function to create a file uploader with automatic reset capability"""
     return st.file_uploader(
@@ -74,6 +64,8 @@ def file_uploader_with_reset(label, file_type, key_base, multiple=False):
         del st.session_state[reset_key]
     return uploader
 
+# Cache processed files with a shorter TTL and max size limit
+@st.cache_data(ttl=1800, max_entries=100)  # Cache for 30 minutes, max 100 entries
 def process_single_upload(file_content, file_name, user_id):
     """Process a single file upload with caching and error recovery"""
     max_retries = 3
@@ -125,9 +117,10 @@ def process_single_upload(file_content, file_name, user_id):
             backoff_time = min(2 ** retry_count, 10)  # Cap at 10 seconds
             time.sleep(backoff_time)
 
+# No caching for bulk upload as it's a one-time operation
 def process_bulk_upload(uploaded_files):
     """Process multiple files in parallel with batch processing and memory optimization"""
-    batch_size = 10  # Increased batch size for better throughput
+    batch_size = 5  # Reduced batch size for better memory management
     results = []
     total_files = len(uploaded_files)
     
@@ -138,6 +131,9 @@ def process_bulk_upload(uploaded_files):
     status_text = st.empty()
     status_text.text(f"Starting upload of {total_files} files...")
     
+    # Get processor once for all batches
+    processor = get_resume_processor()
+    
     for i in range(0, total_files, batch_size):
         batch = uploaded_files[i:i + batch_size]
         current_batch = i // batch_size + 1
@@ -147,7 +143,7 @@ def process_bulk_upload(uploaded_files):
         status_text.text(f"Processing batch {current_batch} of {total_batches}...")
         
         # Dynamically set max_workers based on CPU count and available memory
-        max_workers = min(len(batch), multiprocessing.cpu_count() * 2)  # Increased worker count
+        max_workers = min(len(batch), multiprocessing.cpu_count())  # Reduced worker count for better stability
         logger.debug(f"Using {max_workers} worker threads for batch processing")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -156,7 +152,7 @@ def process_bulk_upload(uploaded_files):
                     process_single_upload,
                     file.getvalue(),
                     file.name,
-                    st.session_state.get('user_id')
+                    get_session('user_id')
                 ): file 
                 for file in batch
             }
@@ -203,22 +199,22 @@ def main():
     initialize_session_state()
     
     # Check if user is authenticated
-    if not st.session_state.get('authenticated', False):
+    if not get_session('authenticated'):
         st.warning("Please log in to access this page")
         return
 
     # Lazy load Supabase client
-    if st.session_state.supabase_client is None:
-        with st.spinner("Initializing..."):
-            st.session_state.supabase_client = get_supabase_client()
+    supabase_client = get_session('supabase_client')
+    if supabase_client is None:
+        st.session_state.supabase_client = get_supabase_client()
 
     # Add back button at the top
     if st.button("← Back to Home"):
-        st.session_state.page = "Home"
+        get_session('page', 'Home')
         st.switch_page("pages/home.py")
 
     st.title("📄 Resume Upload")
-    st.write(f"Welcome, {st.session_state.get('user_email', 'User')}!")
+    st.write(f"Welcome, {get_session('user_email', 'User')}!")
 
     # Create two columns for single and bulk upload
     col1, col2 = st.columns(2)
@@ -233,19 +229,17 @@ def main():
         
         if uploaded_file:
             if st.button("Process Single Upload"):
-                with st.spinner("Loading processor..."):
-                    st.session_state.resume_processor = get_resume_processor()
                 result = process_single_upload(
                     uploaded_file.getvalue(),
                     uploaded_file.name,
-                    st.session_state.get('user_id')
+                    get_session('user_id')
                 )
                 if result:
                     # Store success message in session state
-                    st.session_state.upload_success = f"Successfully processed {uploaded_file.name}!"
-                    st.success(st.session_state.upload_success)
+                    get_session('upload_success', f"Successfully processed {uploaded_file.name}!")
+                    st.success(get_session('upload_success'))
                     # Set reset flag for the uploader
-                    st.session_state.reset_single_upload = True
+                    get_session('reset_single_upload', True)
                     st.rerun()
 
     with col2:
@@ -259,14 +253,12 @@ def main():
         
         if uploaded_files:
             if st.button("Process Bulk Upload"):
-                with st.spinner("Loading processor..."):
-                    st.session_state.resume_processor = get_resume_processor()
                 results = process_bulk_upload(uploaded_files)
                 success_count = sum(1 for _, success in results if success)
                 
                 # Store success message in session state
-                st.session_state.bulk_upload_success = f"Successfully processed {success_count} out of {len(uploaded_files)} files"
-                st.success(st.session_state.bulk_upload_success)
+                get_session('bulk_upload_success', f"Successfully processed {success_count} out of {len(uploaded_files)} files")
+                st.success(get_session('bulk_upload_success'))
                 
                 # Show failed files if any
                 failed_files = [name for name, success in results if not success]
@@ -274,25 +266,27 @@ def main():
                     st.warning(f"Failed to process: {', '.join(failed_files)}")
                 
                 # Set reset flag for the uploader
-                st.session_state.reset_bulk_upload = True
+                get_session('reset_bulk_upload', True)
                 st.rerun()
 
     # Display any stored success messages
-    if st.session_state.get('upload_success'):
-        st.success(st.session_state.upload_success)
+    upload_success = get_session('upload_success')
+    if upload_success:
+        st.success(upload_success)
         # Clear the message after displaying
         del st.session_state.upload_success
     
-    if st.session_state.get('bulk_upload_success'):
-        st.success(st.session_state.bulk_upload_success)
+    bulk_upload_success = get_session('bulk_upload_success')
+    if bulk_upload_success:
+        st.success(bulk_upload_success)
         # Clear the message after displaying
         del st.session_state.bulk_upload_success
 
     # Add a logout button at the bottom
     st.markdown("---")
     if st.button("Logout"):
-        st.session_state.authenticated = False
-        st.session_state.user_email = None
+        get_session('authenticated', False)
+        get_session('user_email', None)
         st.switch_page("pages/login.py")
 
 if __name__ == "__main__":

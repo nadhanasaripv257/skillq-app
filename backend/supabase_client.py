@@ -16,26 +16,41 @@ logger = logging.getLogger(__name__)
 class SupabaseClient:
     def __init__(self):
         logger.info("Initializing SupabaseClient")
-        try:
-            # Create client with the service role key
-            self.client: Client = create_client(
-                supabase_url=os.getenv("SUPABASE_URL"),
-                supabase_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-            )
-            
-            # Set the headers explicitly
-            self.client.postgrest.headers = {
-                "apikey": os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
-                "Authorization": f"Bearer {os.getenv('SUPABASE_SERVICE_ROLE_KEY')}"
-            }
-            
-            # Extract project reference from Supabase URL
-            self.project_ref = os.getenv("SUPABASE_URL").split("//")[1].split(".")[0]
-            logger.info("Successfully initialized Supabase client")
-        except Exception as e:
-            logger.error(f"Failed to initialize Supabase client: {str(e)}", exc_info=True)
-            raise
+        self._client = None
+        self._project_ref = None
         self._local_cache = {}
+
+    @property
+    def client(self) -> Client:
+        """Lazy load the Supabase client"""
+        if self._client is None:
+            try:
+                # Create client with the service role key
+                self._client = create_client(
+                    supabase_url=os.getenv("SUPABASE_URL"),
+                    supabase_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                )
+                
+                # Set the headers explicitly
+                self._client.postgrest.headers = {
+                    "apikey": os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
+                    "Authorization": f"Bearer {os.getenv('SUPABASE_SERVICE_ROLE_KEY')}"
+                }
+                
+                # Extract project reference from Supabase URL
+                self._project_ref = os.getenv("SUPABASE_URL").split("//")[1].split(".")[0]
+                logger.info("Successfully initialized Supabase client")
+            except Exception as e:
+                logger.error(f"Failed to initialize Supabase client: {str(e)}", exc_info=True)
+                raise
+        return self._client
+
+    @property
+    def project_ref(self) -> str:
+        """Lazy load the project reference"""
+        if self._project_ref is None:
+            self._project_ref = os.getenv("SUPABASE_URL").split("//")[1].split(".")[0]
+        return self._project_ref
 
     def get_authed_client(self, access_token: str) -> Client:
         """Create an authenticated client with the given access token"""

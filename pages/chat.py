@@ -4,16 +4,15 @@ import os
 from dotenv import load_dotenv
 import json
 from datetime import datetime, UTC
-from backend.openai_client import OpenAIClient
-from backend.supabase_client import SupabaseClient
 import pandas as pd
 import logging
 import time
 import uuid
+from functools import lru_cache
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,  # Changed to WARNING to reduce logging overhead
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -21,11 +20,16 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Initialize Supabase client
-supabase_client = SupabaseClient()
+# Initialize clients with caching
+@st.cache_resource
+def get_supabase_client():
+    from backend.supabase_client import SupabaseClient
+    return SupabaseClient()
 
-# Initialize OpenAI client
-openai_client = OpenAIClient()
+@st.cache_resource
+def get_openai_client():
+    from backend.openai_client import OpenAIClient
+    return OpenAIClient()
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -48,9 +52,11 @@ def initialize_session_state():
     if 'trigger_search' not in st.session_state:
         st.session_state.trigger_search = False
 
+@st.cache_data(ttl=3600)  # Cache skills for 1 hour
 def get_candidate_skills():
     """Get all candidate skills from resumes and organize them by category"""
     try:
+        supabase_client = get_supabase_client()
         response = supabase_client.table('resumes').select('skills, skill_categories').execute()
         all_skills = set()
         skill_categories = {}
@@ -134,20 +140,21 @@ def display_skills(skills_by_category):
                     col_idx = i % 3
                     cols[col_idx].write(f"• {skill}")
 
+@st.cache_data(ttl=300)  # Cache search results for 5 minutes
 def refine_search_candidates(query, current_filters):
     """Refine search based on new query and existing filters"""
     try:
         logger.info(f"Processing new search query: {query}")
-        logger.info(f"Current filters before update: {json.dumps(current_filters, indent=2) if current_filters else 'None'}")
+        
+        # Get clients
+        supabase_client = get_supabase_client()
+        openai_client = get_openai_client()
         
         # Extract new filters from the query first
         new_filters = openai_client.extract_query_filters(query)
-        logger.info(f"LLM extracted filters: {json.dumps(new_filters, indent=2)}")
         
         # Replace current filters with new filters instead of merging
         current_filters = new_filters
-        
-        logger.info(f"Final filters after update: {json.dumps(current_filters, indent=2)}")
         
         # Get all keywords from filters
         keywords = []
@@ -188,14 +195,15 @@ def refine_search_candidates(query, current_filters):
         # Fetch full details for matched candidates
         final_candidates = []
         if matched_ids:
-            for candidate_id in matched_ids:
-                # Join resumes with resumes_pii to get PII data
+            # Batch process IDs in chunks of 50
+            id_chunks = [list(matched_ids)[i:i + 50] for i in range(0, len(matched_ids), 50)]
+            for chunk in id_chunks:
                 response = supabase_client.table('resumes')\
                     .select('id, location, total_years_experience, current_or_last_job_title, skills, search_blob, risk_score, issues, resumes_pii(full_name, email, phone)')\
-                    .eq('id', candidate_id)\
+                    .in_('id', chunk)\
                     .execute()
-                if response.data:
-                    candidate = response.data[0]
+                
+                for candidate in response.data:
                     # Flatten the PII data
                     if candidate.get('resumes_pii') and isinstance(candidate['resumes_pii'], list) and len(candidate['resumes_pii']) > 0:
                         pii_data = candidate['resumes_pii'][0]  # Get the first PII record
@@ -218,50 +226,13 @@ def refine_search_candidates(query, current_filters):
 
         # Convert to DataFrame for easier manipulation
         df = pd.DataFrame(final_candidates)
-        logger.info(f"Found {len(df)} unique candidates")
-        
-        # Return early if no candidates found
-        if len(df) == 0:
-            logger.info("No matching candidates found")
-            return [], current_filters
-        
-        # Log detailed matching information
-        for _, candidate in df.iterrows():
-            logger.info(f"\nCandidate: {candidate.get('full_name', 'N/A')}")
-            logger.info(f"Location: {candidate.get('location', 'N/A')}")
-            logger.info(f"Job Title: {candidate.get('current_or_last_job_title', 'N/A')}")
-            logger.info(f"Experience: {candidate.get('total_years_experience', 'N/A')} years")
-            logger.info(f"Skills: {candidate.get('skills', [])}")
+        return df.to_dict('records'), current_filters
             
-            # Log which filters matched
-            if current_filters.get('location'):
-                logger.info(f"✓ Matched location: {current_filters['location']}")
-            if current_filters.get('experience_years_min'):
-                logger.info(f"✓ Matched experience: {current_filters['experience_years_min']}+ years")
-            if keywords:
-                # Check for partial matches in the pipe-separated list
-                candidate_keywords = candidate.get('search_blob', '').split('|')
-                matched_keywords = []
-                for kw in keywords:
-                    # For keywords >= 3 chars, allow partial matches
-                    if len(kw) >= 3:
-                        if any(kw in word for word in candidate_keywords):
-                            matched_keywords.append(kw)
-                    # For shorter keywords, only match exact words
-                    else:
-                        if kw in candidate_keywords:
-                            matched_keywords.append(kw)
-                if matched_keywords:
-                    logger.info(f"✓ Matched keywords: {matched_keywords}")
-        
-        # Convert back to list of dictionaries
-        candidates = df.to_dict('records')
-        
-        return candidates, current_filters
     except Exception as e:
         logger.error(f"Error searching candidates: {str(e)}", exc_info=True)
         return [], current_filters
 
+@st.cache_data(ttl=3600)  # Cache outreach data for 1 hour
 def can_generate_outreach(candidate_id: str) -> bool:
     """Check if we can generate outreach for this candidate based on rate limiting"""
     current_time = time.time()
@@ -285,12 +256,81 @@ def update_outreach_count(candidate_id: str):
     st.session_state.last_outreach_time[candidate_id] = current_time
     st.session_state.outreach_count[candidate_id] = st.session_state.outreach_count.get(candidate_id, 0) + 1
 
+@st.cache_data(ttl=3600)  # Cache outreach data for 1 hour
+def get_cached_outreach(candidate_id: str, query: str) -> dict:
+    """Get cached outreach data from Supabase"""
+    try:
+        supabase_client = get_supabase_client()
+        response = supabase_client.table('outreach_cache')\
+            .select('*')\
+            .eq('candidate_id', candidate_id)\
+            .eq('query', query)\
+            .execute()
+        
+        if response.data:
+            return response.data[0]['outreach_data']
+        return None
+    except Exception as e:
+        logger.error(f"Error getting cached outreach: {str(e)}")
+        return None
+
+@st.cache_data(ttl=3600)  # Cache outreach data for 1 hour
+def cache_outreach_message(candidate_id: str, query: str, outreach_data: dict):
+    """Cache outreach data in Supabase"""
+    try:
+        supabase_client = get_supabase_client()
+        data = {
+            'candidate_id': candidate_id,
+            'query': query,
+            'outreach_data': outreach_data,
+            'created_at': datetime.now(UTC).isoformat()
+        }
+        
+        response = supabase_client.table('outreach_cache')\
+            .upsert(data)\
+            .execute()
+            
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Error caching outreach data: {str(e)}")
+        return None
+
+@st.cache_data(ttl=3600)  # Cache outreach data for 1 hour
+def generate_outreach_message(candidate: dict, query: str) -> dict:
+    """Generate outreach message and screening questions"""
+    try:
+        # Get clients
+        supabase_client = get_supabase_client()
+        openai_client = get_openai_client()
+        
+        # Check cache first
+        cached_data = get_cached_outreach(candidate['id'], query)
+        if cached_data:
+            return cached_data
+            
+        # Generate new outreach data
+        outreach_data = openai_client.generate_outreach(
+            candidate=candidate,
+            original_query=query
+        )
+        
+        # Cache the result
+        cache_outreach_message(candidate['id'], query, outreach_data)
+        
+        return outreach_data
+    except Exception as e:
+        logger.error(f"Error generating outreach message: {str(e)}")
+        return None
+
 def format_candidate_response(candidates):
     """Format candidate search results into a table with rankings"""
     if not candidates:
         st.error("❌ No matching candidates found for your search criteria.")
         st.info("Try adjusting your search criteria or filters to find more candidates.")
         return "No matching candidates found."
+    
+    # Get clients
+    openai_client = get_openai_client()
     
     # Get ranked candidates
     ranked_candidates = openai_client.rank_candidates(
@@ -346,35 +386,21 @@ def format_candidate_response(candidates):
                         st.error("Please log in to generate outreach messages")
                         continue
                     
-                    recruiter_id = st.session_state.user_id
-                    
-                    # Check Supabase cache first
-                    cached_data = supabase_client.get_cached_outreach(
-                        candidate['id'],
-                        st.session_state.last_query
+                    # Generate outreach message
+                    outreach_data = generate_outreach_message(
+                        candidate=candidate,
+                        query=st.session_state.last_query
                     )
                     
-                    if cached_data:
-                        outreach_data = cached_data
-                    else:
-                        # Generate new outreach data
-                        outreach_data = openai_client.generate_outreach(
-                            candidate=candidate,
-                            original_query=st.session_state.last_query
-                        )
-                        # Cache the result
-                        supabase_client.cache_outreach_message(
-                            candidate['id'],
-                            st.session_state.last_query,
-                            outreach_data
-                        )
+                    if outreach_data:
+                        # Store in session state for persistence
+                        st.session_state[outreach_key] = outreach_data
                         update_outreach_count(candidate['id'])
-                    
-                    # Store in session state for persistence
-                    st.session_state[outreach_key] = outreach_data
-                    
-                    # Force a rerun to update the UI
-                    st.rerun()
+                        
+                        # Force a rerun to update the UI
+                        st.rerun()
+                    else:
+                        st.error("Failed to generate outreach message. Please try again.")
             
             # Display outreach form if we have data
             if st.session_state[outreach_key]:
@@ -401,6 +427,9 @@ def format_candidate_response(candidates):
                 # Add save button
                 if st.button("💾 Save Draft", key=f"save_draft_{candidate['id']}"):
                     try:
+                        # Get clients
+                        supabase_client = get_supabase_client()
+                        
                         # Get user ID from session
                         user_response = supabase_client.auth.get_user()
                         if not user_response.user:
@@ -415,7 +444,8 @@ def format_candidate_response(candidates):
                             'recruiter_id': recruiter_id,
                             'candidate_id': candidate['id'],
                             'outreach_message': outreach_message,
-                            'screening_questions': questions
+                            'screening_questions': questions,
+                            'created_at': datetime.now(UTC).isoformat()
                         }
                         
                         response = supabase_client.table('recruiter_notes').insert(data).execute()
@@ -510,6 +540,7 @@ def save_chat_message(question, answer):
             st.warning("User email not found. Chat history will not be saved.")
             return
             
+        supabase_client = get_supabase_client()
         data = {
             'user_email': st.session_state.user_email,
             'question': question,
@@ -529,12 +560,14 @@ def save_chat_message(question, answer):
         print(f"Detailed error in save_chat_message: {str(e)}")
         print(f"Data attempted to save: {data}")
 
+@st.cache_data(ttl=300)  # Cache chat history for 5 minutes
 def load_chat_history():
     """Load chat history from Supabase and group by session"""
     try:
         if not st.session_state.user_email:
             return []
             
+        supabase_client = get_supabase_client()
         response = supabase_client.table('chat_history')\
             .select('*')\
             .eq('user_email', st.session_state.user_email)\
