@@ -153,8 +153,8 @@ class SupabaseClient:
                 'country': personal_info.get('country'),    # Country
                 'linkedin_url': personal_info.get('linkedin_url'),
                 
-                # Work Experience
-                'total_years_experience': work_experience.get('total_years_experience'),
+                # Work Experience - ensure numeric fields have default values
+                'total_years_experience': work_experience.get('total_years_experience', 0) or 0,
                 'current_or_last_job_title': work_experience.get('current_or_last_job_title'),
                 'previous_job_titles': work_experience.get('previous_job_titles', []),
                 'companies_worked_at': work_experience.get('companies_worked_at', []),
@@ -175,8 +175,8 @@ class SupabaseClient:
                 'summary_statement': additional_info.get('summary_statement'),
                 'languages_spoken': additional_info.get('languages_spoken', []),
                 
-                # Risk Assessment
-                'risk_score': data.get('risk_score', 0),
+                # Risk Assessment - ensure numeric fields have default values
+                'risk_score': data.get('risk_score', 0) or 0,
                 'issues': data.get('issues', []),
                 
                 # Raw and Processed Data

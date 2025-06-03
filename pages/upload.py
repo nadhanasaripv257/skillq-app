@@ -74,8 +74,6 @@ def process_file_in_chunks(file_content, chunk_size=1024*1024):  # 1MB chunks
             break
         yield chunk
 
-# Cache processed files with strict limits
-@st.cache_data(ttl=1800, max_entries=50)  # 30 minutes, max 50 entries
 def process_single_upload(file_content, file_name, user_id):
     """Process a single file upload with memory-efficient processing"""
     max_retries = 3
@@ -83,45 +81,31 @@ def process_single_upload(file_content, file_name, user_id):
     
     logger.info(f"Starting to process file: {file_name}")
     
-    # Create a progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
     while retry_count < max_retries:
         try:
             processor = get_resume_processor()
             
-            # Update progress for each step
-            status_text.text("Reading file...")
-            progress_bar.progress(25)
-            
-            # Process content in chunks
-            processed_chunks = []
-            for chunk in process_file_in_chunks(file_content):
-                processed_chunks.append(chunk)
+            # If file_content is already bytes, use it directly
+            if isinstance(file_content, bytes):
+                content = file_content
+            else:
+                # If it's a file-like object, read it once
+                content = file_content.read()
             
             # Process content in parallel with progress updates
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 # Start the processing in a separate thread
-                future = executor.submit(processor.process_resume_content, b''.join(processed_chunks), file_name)
+                future = executor.submit(processor.process_resume_content, content, file_name)
                 
                 # Update progress while processing
                 while not future.done():
-                    status_text.text("Processing content...")
-                    progress_bar.progress(50)
                     time.sleep(0.1)
                 
                 result = future.result()
             
-            # Clear processed chunks to free memory
-            processed_chunks.clear()
+            # Clear content to free memory
+            del content
             gc.collect()
-            
-            status_text.text("Storing data...")
-            progress_bar.progress(75)
-            
-            status_text.text("Complete!")
-            progress_bar.progress(100)
             
             logger.info(f"Successfully processed file: {file_name}")
             return result
@@ -144,11 +128,6 @@ def process_bulk_upload(uploaded_files):
     
     logger.info(f"Starting bulk upload of {total_files} files")
     
-    # Create a progress bar for overall progress
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    status_text.text(f"Starting upload of {total_files} files...")
-    
     # Get processor once for all batches
     processor = get_resume_processor()
     
@@ -158,7 +137,6 @@ def process_bulk_upload(uploaded_files):
         total_batches = (total_files + batch_size - 1) // batch_size
         
         logger.debug(f"Processing batch {current_batch} of {total_batches}")
-        status_text.text(f"Processing batch {current_batch} of {total_batches}...")
         
         # Dynamically set max_workers based on CPU count and available memory
         max_workers = min(len(batch), multiprocessing.cpu_count() // 2)  # Use half the CPU cores
@@ -183,11 +161,6 @@ def process_bulk_upload(uploaded_files):
                     result = future.result()
                     results.append((file.name, bool(result)))
                     completed += 1
-                    # Update progress within batch
-                    batch_progress = completed / len(batch)
-                    overall_progress = (i + completed) / total_files
-                    progress_bar.progress(overall_progress)
-                    status_text.text(f"Processing batch {current_batch} of {total_batches}... ({completed}/{len(batch)} files)")
                     logger.info(f"Successfully processed {file.name}")
                 except Exception as e:
                     results.append((file.name, False))
@@ -196,17 +169,9 @@ def process_bulk_upload(uploaded_files):
         
         # Force garbage collection after each batch
         gc.collect()
-        
-        # Update overall progress after batch completion
-        progress = min(1.0, (i + len(batch)) / total_files)
-        status_text.text(f"Completed batch {current_batch} of {total_batches}")
-        progress_bar.progress(progress)
     
     # Show completion
     success_count = sum(1 for _, success in results if success)
-    status_text.text(f"Upload complete! Successfully processed {success_count} out of {total_files} files")
-    progress_bar.progress(1.0)
-    
     logger.info(f"Bulk upload completed. Successfully processed {success_count} out of {total_files} files")
     return results
 
@@ -250,19 +215,17 @@ def main():
         
         if uploaded_file:
             if st.button("Process Single Upload"):
-                with st.spinner("Processing your resume..."):
+                with st.spinner("Processing resume..."):
                     result = process_single_upload(
                         uploaded_file.getvalue(),
                         uploaded_file.name,
                         get_session('user_id')
                     )
-                if result:
-                    # Store success message in session state
-                    get_session('upload_success', f"Successfully processed {uploaded_file.name}!")
-                    st.success(get_session('upload_success'))
-                    # Set reset flag for the uploader
-                    get_session('reset_single_upload', True)
-                    st.rerun()
+                    if result:
+                        st.success(f"Successfully processed {uploaded_file.name}!")
+                        # Set reset flag for the uploader
+                        get_session('reset_single_upload', True)
+                        st.rerun()
 
     with col2:
         st.subheader("Bulk Upload")
@@ -275,13 +238,11 @@ def main():
         
         if uploaded_files:
             if st.button("Process Bulk Upload"):
-                with st.spinner("Processing your resumes..."):
+                with st.spinner("Processing resumes..."):
                     results = process_bulk_upload(uploaded_files)
                     success_count = sum(1 for _, success in results if success)
                     
-                    # Store success message in session state
-                    get_session('bulk_upload_success', f"Successfully processed {success_count} out of {len(uploaded_files)} files")
-                    st.success(get_session('bulk_upload_success'))
+                    st.success(f"Successfully processed {success_count} out of {len(uploaded_files)} files")
                     
                     # Show failed files if any
                     failed_files = [name for name, success in results if not success]
@@ -291,19 +252,6 @@ def main():
                     # Set reset flag for the uploader
                     get_session('reset_bulk_upload', True)
                     st.rerun()
-
-    # Display any stored success messages
-    upload_success = get_session('upload_success')
-    if upload_success:
-        st.success(upload_success)
-        # Clear the message after displaying
-        del st.session_state.upload_success
-    
-    bulk_upload_success = get_session('bulk_upload_success')
-    if bulk_upload_success:
-        st.success(bulk_upload_success)
-        # Clear the message after displaying
-        del st.session_state.bulk_upload_success
 
     # Add a logout button at the bottom
     st.markdown("---")
