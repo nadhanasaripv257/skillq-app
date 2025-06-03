@@ -43,18 +43,21 @@ class PIIProcessor:
             # Ensure spaCy model is installed
             ensure_spacy_model()
             
-            # Create spaCy NLP engine with language code
-            spacy_engine = SpacyNlpEngine({
-                "models": [
-                    {
-                        "lang_code": "en",
-                        "model_name": SPACY_MODEL
-                    }
-                ]
-            })
+            # Create NLP engine provider with proper configuration
+            nlp_engine_provider = NlpEngineProvider(
+                nlp_configuration={
+                    "nlp_engine_name": "spacy",
+                    "models": [
+                        {
+                            "lang_code": "en",
+                            "model_name": SPACY_MODEL
+                        }
+                    ]
+                }
+            )
             
             # Initialize Presidio analyzer and anonymizer
-            self.analyzer = AnalyzerEngine(nlp_engine=spacy_engine)
+            self.analyzer = AnalyzerEngine(nlp_engine=nlp_engine_provider.create_engine())
             self.anonymizer = AnonymizerEngine()
             
             # Common false positives for name detection

@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 import logging
 from functools import lru_cache
+import time
+import concurrent.futures
 
 # Configure logging only if not already configured
 if not logging.getLogger().handlers:
@@ -210,11 +212,6 @@ def main():
         with st.spinner("Initializing..."):
             st.session_state.supabase_client = get_supabase_client()
 
-    # Lazy load ResumeProcessor
-    if st.session_state.resume_processor is None:
-        with st.spinner("Loading processor..."):
-            st.session_state.resume_processor = get_resume_processor()
-
     # Add back button at the top
     if st.button("← Back to Home"):
         st.session_state.page = "Home"
@@ -236,6 +233,8 @@ def main():
         
         if uploaded_file:
             if st.button("Process Single Upload"):
+                with st.spinner("Loading processor..."):
+                    st.session_state.resume_processor = get_resume_processor()
                 result = process_single_upload(
                     uploaded_file.getvalue(),
                     uploaded_file.name,
@@ -260,6 +259,8 @@ def main():
         
         if uploaded_files:
             if st.button("Process Bulk Upload"):
+                with st.spinner("Loading processor..."):
+                    st.session_state.resume_processor = get_resume_processor()
                 results = process_bulk_upload(uploaded_files)
                 success_count = sum(1 for _, success in results if success)
                 
