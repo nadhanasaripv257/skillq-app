@@ -111,10 +111,25 @@ def process_single_upload(file_content, file_name, user_id):
             return result
         except Exception as e:
             retry_count += 1
-            logger.error(f"Error processing file {file_name} (attempt {retry_count}/{max_retries}): {str(e)}", exc_info=True)
+            error_msg = str(e)
+            
+            # Handle specific error cases
+            if "400" in error_msg:
+                st.error(f"Invalid resume format or content in {file_name}. Please ensure the file is a valid PDF or DOCX file.")
+            elif "401" in error_msg or "403" in error_msg:
+                st.error("Authentication error. Please try logging in again.")
+            elif "413" in error_msg:
+                st.error(f"File {file_name} is too large. Please upload a smaller file.")
+            elif "500" in error_msg:
+                st.error("Server error. Please try again later.")
+            else:
+                st.error(f"Error processing file {file_name} (attempt {retry_count}/{max_retries}): {error_msg}")
+            
+            logger.error(f"Error processing file {file_name} (attempt {retry_count}/{max_retries}): {error_msg}", exc_info=True)
+            
             if retry_count == max_retries:
-                st.error(f"Error processing file {file_name} after {max_retries} attempts: {str(e)}")
                 return None
+                
             st.warning(f"Retrying {file_name} (attempt {retry_count + 1}/{max_retries})...")
             # Implement exponential backoff for retries
             backoff_time = min(2 ** retry_count, 10)  # Cap at 10 seconds
@@ -163,9 +178,22 @@ def process_bulk_upload(uploaded_files):
                     completed += 1
                     logger.info(f"Successfully processed {file.name}")
                 except Exception as e:
+                    error_msg = str(e)
                     results.append((file.name, False))
-                    logger.error(f"Error processing {file.name}: {str(e)}", exc_info=True)
-                    st.error(f"Error processing {file.name}: {str(e)}")
+                    
+                    # Handle specific error cases
+                    if "400" in error_msg:
+                        st.error(f"Invalid resume format or content in {file.name}. Please ensure the file is a valid PDF or DOCX file.")
+                    elif "401" in error_msg or "403" in error_msg:
+                        st.error("Authentication error. Please try logging in again.")
+                    elif "413" in error_msg:
+                        st.error(f"File {file.name} is too large. Please upload a smaller file.")
+                    elif "500" in error_msg:
+                        st.error("Server error. Please try again later.")
+                    else:
+                        st.error(f"Error processing {file.name}: {error_msg}")
+                    
+                    logger.error(f"Error processing {file.name}: {error_msg}", exc_info=True)
         
         # Force garbage collection after each batch
         gc.collect()
